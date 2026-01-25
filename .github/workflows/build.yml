@@ -1,5 +1,5 @@
 
-name: Mac App bauen
+name: Mac .app bauen (Doppelklick)
 
 on:
   workflow_dispatch:
@@ -22,7 +22,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Mac App bauen
+      # 1) PyInstaller Build (Console-Tool, onedir ist stabil und leicht zu bündeln)
+      - name: Build mit PyInstaller
         run: |
           pyinstaller --clean --noconfirm \
             --name "PnP PDF Creator" \
@@ -30,15 +31,73 @@ jobs:
             --onedir \
             PnP_PDF_Creator.py
 
-      - name: App verpacken
+      # 2) Wrapper-.app bauen, die Terminal öffnet und das Tool startet
+      - name: Wrapper .app erstellen (Doppelklick -> Terminal)
         run: |
-          cd dist
+          set -e
+
+          # Debug: Was ist in dist?
+          echo "== dist Inhalt =="
+          ls -la dist
+
+          # PyInstaller onedir Output: dist/"PnP PDF Creator"/"PnP PDF Creator"
+          if [ ! -d "dist/PnP PDF Creator" ]; then
+            echo "❌ Erwarteter Ordner dist/PnP PDF Creator fehlt."
+            exit 1
+          fi
+
+          if [ ! -f "dist/PnP PDF Creator/PnP PDF Creator" ]; then
+            echo "❌ Erwartete Datei dist/PnP PDF Creator/PnP PDF Creator fehlt."
+            echo "Ordnerinhalt:"
+            ls -la "dist/PnP PDF Creator"
+            exit 1
+          fi
+
+          chmod +x "dist/PnP PDF Creator/PnP PDF Creator"
+
+          # AppleScript, das Terminal öffnet und das Programm startet
+          cat > launcher.applescript <<'APPLESCRIPT'
+          on run
+              set appName to "PnP PDF Creator"
+              set bundlePath to POSIX path of (path to me)
+              set toolDir to bundlePath & "Contents/Resources/tool/"
+              set exePath to toolDir & appName
+
+              tell application "Terminal"
+                  activate
+                  do script "cd " & quoted form of toolDir & " && " & quoted form of exePath
+              end tell
+          end run
+          APPLESCRIPT
+
+          # .app erzeugen
+          osacompile -o "PnP PDF Creator.app" launcher.applescript
+
+          # Icon in die Wrapper-App kopieren (Finder-Icon)
+          mkdir -p "PnP PDF Creator.app/Contents/Resources"
+          cp "PnP_PDF_Creator.icns" "PnP PDF Creator.app/Contents/Resources/applet.icns"
+
+          # PyInstaller-Build in die Wrapper-App einbetten
+          mkdir -p "PnP PDF Creator.app/Contents/Resources/tool"
+          cp -R "dist/PnP PDF Creator/." "PnP PDF Creator.app/Contents/Resources/tool/"
+
+          # Optional: Minimal Info.plist Eintrag (Name)
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName PnP\ PDF\ Creator" "PnP PDF Creator.app/Contents/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName PnP\ PDF\ Creator" "PnP PDF Creator.app/Contents/Info.plist" || true
+
+          echo "✅ Wrapper-App erstellt:"
+          ls -la "PnP PDF Creator.app"
+
+      # 3) Als ZIP verpacken (wichtig für macOS-Ressourcen)
+      - name: Wrapper-App verpacken
+        run: |
           ditto -c -k --sequesterRsrc --keepParent \
             "PnP PDF Creator.app" \
-            "PnP_PDF_Creator_macOS.zip"
+            "PnP_PDF_Creator_macOS_APP.zip"
 
+      # 4) ZIP als Artefakt hochladen
       - name: Ergebnis hochladen
         uses: actions/upload-artifact@v4
         with:
-          name: PnP_PDF_Creator_macOS
-          path: dist/PnP_PDF_Creator_macOS.zip
+          name: PnP_PDF_Creator_macOS_APP
+          path: PnP_PDF_Creator_macOS_APP.zip
