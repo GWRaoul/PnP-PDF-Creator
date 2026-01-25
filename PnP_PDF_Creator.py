@@ -1493,7 +1493,7 @@ def main():
                 pagesize_tuple = base_pagesize
 
             # Layout-Suffix für Dateiname
-            layout_suffix = "_9cards" if layout_key == "3x3" else "_6cards" if layout_key == "2x3" else "_gutterfold"
+            layout_suffix = "_3x3" if layout_key == "3x3" else "_2x3" if layout_key == "2x3" else "_gutterfold"
             # Dateiname mit Layout + Papierformat (wenn BOTH)
             out_path = Path(f"{out_base}{layout_suffix}{suffix}.pdf" if multi else f"{out_base}{layout_suffix}.pdf").resolve()
  
