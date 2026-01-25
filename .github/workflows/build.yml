@@ -88,6 +88,14 @@ jobs:
           echo "✅ Wrapper-App erstellt:"
           ls -la "PnP PDF Creator.app"
 
+      - name: Wrapper-App ad-hoc signieren (gegen "beschädigt")
+        run: |
+          # Bundle inkl. "nested" Inhalte signieren (Frameworks, Helper usw.)
+          codesign --force --deep --sign - "PnP PDF Creator.app"
+
+          # Optionaler Check (zeigt Signaturinfos im Log)
+          codesign -dv --verbose=2 "PnP PDF Creator.app" || true
+
       # 3) Als ZIP verpacken (wichtig für macOS-Ressourcen)
       - name: Wrapper-App verpacken
         run: |
