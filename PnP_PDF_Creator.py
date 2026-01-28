@@ -56,9 +56,8 @@ except ImportError:
 # =========================================================
 # Script version / debug
 # =========================================================
-SCRIPT_VERSION = 'V1.0-2026-01-25'
+SCRIPT_VERSION = 'V1.1-2026-01-28'
 DEBUG_PREPROCESS = False  # set True to print per-image crop/resize diagnostics
-DEBUG_MAX_IMAGES = 5
 
 # =========================================================
 # Quality presets (Cards only)
@@ -75,6 +74,128 @@ QUALITY_PRESETS = {
 # Global config
 # =========================================================
 SUPPORTED_EXT = {".png", ".jpg", ".jpeg"}
+# Default basename for a shared card back image (configurable via INI [assets]/cardback_name)
+DEFAULT_CARDBACK_BASENAME = 'cardback'
+CARDBACK_BASENAME = DEFAULT_CARDBACK_BASENAME
+
+# Card format templates (fixed template DPI; bleed is 1/8" per side)
+TEMPLATE_DPI = 300
+BLEED_IN_PER_SIDE = 0.125  # 1/8"
+MM_PER_INCH = 25.4
+
+# Zentrale Laufzeit-STATE (vermeidet global/Annotation-Konflikte)
+STATE = {
+    "current_format": None  # wird in apply_card_format(fmt) gesetzt
+}
+
+# Predefined card formats (UI order is frozen).
+# UI line format: <Name> (<w> x <h> mm) [n]
+CARD_FORMATS = [
+    {'id': 1, 'name': 'Poker', 'w_mm': 63.5, 'h_mm': 88.9},
+    {'id': 2, 'name': 'Euro', 'w_mm': 59.0, 'h_mm': 92.0},
+    {'id': 3, 'name': 'Mini Euro', 'w_mm': 44.0, 'h_mm': 68.0},
+    {'id': 4, 'name': 'American', 'w_mm': 56.0, 'h_mm': 87.0},
+    {'id': 5, 'name': 'Mini American', 'w_mm': 41.0, 'h_mm': 63.0},
+]
+
+def _fmt_to_inner_px(w_mm: float, h_mm: float) -> tuple[int, int]:
+    # Inner/trim pixels at TEMPLATE_DPI
+    w_in = w_mm / MM_PER_INCH
+    h_in = h_mm / MM_PER_INCH
+    return int(round(w_in * TEMPLATE_DPI)), int(round(h_in * TEMPLATE_DPI))
+
+def _px_to_mm(px: float) -> float:
+    # TEMPLATE_DPI = 300, MM_PER_INCH = 25.4
+    return (px / TEMPLATE_DPI) * MM_PER_INCH
+
+def apply_card_format(fmt: dict) -> None:
+    """Apply selected card format to global geometry variables (format-rein).
+
+    We keep the existing pipeline by updating the global INNER/BLEED/PT constants.
+    Bleed is always 1/8" per side at TEMPLATE_DPI => 37.5 px; split as 37/38 like the Poker template.
+    """
+    global POKER_W_PT, POKER_H_PT
+    global BLEED_W_PX, BLEED_H_PX, INNER_W_PX, INNER_H_PX
+
+
+    w_mm = float(fmt['w_mm'])
+    h_mm = float(fmt['h_mm'])
+    w_in = w_mm / MM_PER_INCH
+    h_in = h_mm / MM_PER_INCH
+
+    # Physical size in PDF points (trim size)
+    POKER_W_PT = w_in * 72.0
+    POKER_H_PT = h_in * 72.0
+
+    # Template pixel sizes
+    iw, ih = _fmt_to_inner_px(w_mm, h_mm)
+    INNER_W_PX = iw
+    INNER_H_PX = ih
+    BLEED_W_PX = iw + BLEED_LEFT_TOP_PX + BLEED_RIGHT_BOTTOM_PX
+    BLEED_H_PX = ih + BLEED_LEFT_TOP_PX + BLEED_RIGHT_BOTTOM_PX
+    STATE["current_format"] = fmt
+
+def is_mini_format(fmt: dict) -> bool:
+    """True für Mini Euro / Mini American (Name enthält 'Mini')."""
+    return 'mini' in str(fmt.get('name', '')).lower()
+
+def prompt_card_format() -> dict:
+    """Prompt user for card format. Enter selects Poker (id=1)."""
+    print(t('choose_card_format'))
+    # Einmal über alle Formate iterieren und ausgeben
+    for f in CARD_FORMATS:
+        w = float(f['w_mm'])
+        h = float(f['h_mm'])
+        # Custom (INI) -> 1 Nachkommastelle, sonst kompakt
+        if f.get('src') == 'ini':
+            w_str = _mm_str_custom(w)
+            h_str = _mm_str_custom(h)
+        else:
+            w_str = _mm_str(w)
+            h_str = _mm_str(h)
+        print(f"{f['name']} ({w_str} x {h_str} mm) [{f['id']}]")
+
+    # Auswahl vom Nutzer einlesen (unverändert)
+    while True:
+        raw = input(t('choose_card_format_prompt')).strip()
+        if raw == '':
+            choice = 1
+        else:
+            try:
+                choice = int(raw)
+            except Exception:
+                print(t('invalid_card_format'))
+                continue
+        fmt = next((f for f in CARD_FORMATS if f['id'] == choice), None)
+        if fmt is None:
+            print(t('invalid_card_format'))
+            continue
+        return fmt
+
+def _mm_str(v: float) -> str:
+    return str(int(v)) if float(v).is_integer() else str(v).rstrip('0').rstrip('.')
+
+def _mm_str_custom(v: float) -> str:
+    # Immer 1 Nachkommastelle
+    return f"{v:.1f}"
+
+def print_selected_format_info(fmt: dict) -> None:
+    """Always print selected format and expected image sizes (localized)."""
+    if fmt.get('src') == 'ini':
+        w = _mm_str_custom(float(fmt['w_mm']))
+        h = _mm_str_custom(float(fmt['h_mm']))
+    else:
+        w = _mm_str(float(fmt['w_mm']))
+        h = _mm_str(float(fmt['h_mm']))
+    # Inner/bleed pixels are based on current globals (already applied)
+    iw, ih = INNER_W_PX, INNER_H_PX
+    bw, bh = BLEED_W_PX, BLEED_H_PX
+    print('')
+    print(t('format_info_header', name=fmt['name'], w=w, h=h))
+    print(t('format_info_sizes', iw=iw, ih=ih, bw=bw, bh=bh))
+    print(t('format_info_note'))
+    print('')
+
 
 # Poker (inner) size in PDF points (2.5" x 3.5")
 POKER_W_PT = 2.5 * 72
@@ -82,8 +203,8 @@ POKER_H_PT = 3.5 * 72
 
 # Logo constraints (placement scaling only, NO compression)
 LOGO_MAX_W = 100.0
-LOGO_MAX_H = 20.0
-LOGO_GAP_TO_GRID = 5.0
+LOGO_MAX_H = 15.0
+LOGO_GAP_TO_GRID = 2.0
 
 # Bottom line
 COPY_MAX_CHARS = 30
@@ -107,8 +228,6 @@ INNER_H_PX = BLEED_H_PX - BLEED_LEFT_TOP_PX - BLEED_RIGHT_BOTTOM_PX  # 1050
 # =========================================================
 # Gutterfold layout config (NEW: 2 rows x 4 cols, horizontal fold)
 # =========================================================
-GF_COLS = 4
-GF_ROWS = 2
 
 GF_FOLD_GUTTER_PT = 12.0   # Abstand zwischen oberer und unterer Reihe (Falzbereich)
 GF_COL_GAP_PT = 0.0        # <-- BÜNDIG (keine Lücke zwischen Spalten)
@@ -120,8 +239,45 @@ GF_FOLD_LINE_DASH = (3, 3)
 # Placement of page number and version number
 LEFT_MARGIN = 20.0 # Version number
 RIGHT_MARGIN = 20.0 # Page number
-BOTTOM_Y = 17.0 # Placement from bottom page
+BOTTOM_Y = 10.0 # Placement from bottom page
 BOTTOM_Y_LETTER_3X3 = 6.0  # nur 3x3 im Letter-Format: tiefer setzen
+
+# =========================================================
+# Druckfreier Rand + Reserven (NEU)
+# =========================================================
+def cm_to_pt(cm: float) -> float:
+    return cm * 72.0 / 2.54
+
+# 1 cm druckfreier Rand rundum
+PRINT_SAFE_MARGIN_CM = 0.1
+MARGINS_PT = {
+    "left":   cm_to_pt(PRINT_SAFE_MARGIN_CM),
+    "right":  cm_to_pt(PRINT_SAFE_MARGIN_CM),
+    "top":    cm_to_pt(PRINT_SAFE_MARGIN_CM),
+    "bottom": cm_to_pt(PRINT_SAFE_MARGIN_CM),
+}
+
+# Untere Reserve: verhindert, dass Karten die Fußzeile überdecken
+# (mind. etwas über BOTTOM_Y sowie lang genug für Außenmarken)
+BOTTOM_RESERVED_PT = max(BOTTOM_Y + 5.0, CUTMARK_LEN_PT_STD)
+
+# ---------------------------------------------------------
+# Reservierter Platz für Kopf/Fuß und Seiten (konfigurierbar)
+# Symmetrisch als Default, damit die optische Zentrierung gewahrt bleibt.
+# ---------------------------------------------------------
+RESERVE_BOTTOM_PT = BOTTOM_RESERVED_PT
+RESERVE_TOP_PT    = RESERVE_BOTTOM_PT
+RESERVE_LEFT_PT   = 0.0
+RESERVE_RIGHT_PT  = 0.0
+
+def draw_logo_in_header_band(c, logo_path, page_w, page_h, margins, header_h):
+    lw, lh = fit_logo_with_constraints(logo_path, LOGO_MAX_W, LOGO_MAX_H)
+    x = margins["left"] + RESERVE_LEFT_PT + (page_w - margins["left"] - margins["right"]
+                                             - RESERVE_LEFT_PT - RESERVE_RIGHT_PT - lw)/2.0
+    y = page_h - margins["top"] - header_h + (header_h - lh)/2.0  # mittig im Kopfband
+    c.drawImage(ImageReader(str(logo_path)), x, y, width=lw, height=lh,
+                preserveAspectRatio=True, mask="auto")
+
 
 # =========================================================
 # Language (UI) - EXE-safe persistence via INI next to EXE
@@ -196,7 +352,63 @@ def ensure_cutmark_defaults(cp: configparser.ConfigParser) -> bool:
             changed = True
     return changed
 
+def ensure_custom_format_defaults(cp: configparser.ConfigParser) -> bool:
+    """
+    Stellt [custom_format] mit sinnvollen Defaults bereit.
+    Rückgabe: True, wenn cp geändert wurde.
+    """
+    changed = False
+    if not cp.has_section('custom_format'):
+        cp.add_section('custom_format')
+        changed = True
+    if not cp.has_option('custom_format', 'name'):
+        cp.set('custom_format', 'name', 'Custom (INI)')
+        changed = True
+    # Default = Poker-Trim 750x1050 px, damit sofort nutzbar
+    if not cp.has_option('custom_format', 'inner_w_px'):
+        cp.set('custom_format', 'inner_w_px', '750')
+        changed = True
+    if not cp.has_option('custom_format', 'inner_h_px'):
+        cp.set('custom_format', 'inner_h_px', '1050')
+        changed = True
+    return changed
 
+def load_custom_format_from_config(cp: configparser.ConfigParser) -> Optional[dict]:
+    """
+    Liest [custom_format] und baut ein Format-Dict im Stil von CARD_FORMATS.
+    Erwartet 'name', 'inner_w_px', 'inner_h_px' > 0.
+    """
+    try:
+        name = cp.get('custom_format', 'name', fallback='').strip()
+        w_px = cp.getint('custom_format', 'inner_w_px', fallback=0)
+        h_px = cp.getint('custom_format', 'inner_h_px', fallback=0)
+        if not name or w_px <= 0 or h_px <= 0:
+            return None
+        # mm aus px bei TEMPLATE_DPI
+        w_mm = _px_to_mm(float(w_px))
+        h_mm = _px_to_mm(float(h_px))
+        # ID 6 reservieren
+        return {'id': 6, 'name': name, 'w_mm': w_mm, 'h_mm': h_mm, 'src': 'ini'}
+    except Exception:
+        return None
+
+def ensure_assets_defaults(cp: configparser.ConfigParser) -> bool:
+    # Ensure [assets] section exists with defaults (e.g. shared cardback image name).
+    changed = False
+    if not cp.has_section('assets'):
+        cp.add_section('assets')
+        changed = True
+    if not cp.has_option('assets', 'cardback_name'):
+        cp.set('assets', 'cardback_name', DEFAULT_CARDBACK_BASENAME)
+        changed = True
+    return changed
+
+
+def load_assets_from_config(cp: configparser.ConfigParser) -> None:
+    # Load asset settings from INI into global variables.
+    global CARDBACK_BASENAME
+    name = cp.get('assets', 'cardback_name', fallback=DEFAULT_CARDBACK_BASENAME).strip()
+    CARDBACK_BASENAME = name if name else DEFAULT_CARDBACK_BASENAME
 def load_cutmarks_from_config(cp: configparser.ConfigParser) -> None:
     # Load cutmark settings from INI into the global variables.
     global CUTMARK_LEN_PT_STD, CUTMARK_LINE_PT_STD, CUTMARK_LEN_PT_2X3, CUTMARK_LINE_PT_2X3
@@ -206,19 +418,6 @@ def load_cutmarks_from_config(cp: configparser.ConfigParser) -> None:
     CUTMARK_LEN_PT_2X3 = _get_positive_float(cp, 'cutmarks', 'length_pt_2x3', CUTMARK_LEN_PT_2X3)
     CUTMARK_LINE_PT_2X3 = _get_positive_float(cp, 'cutmarks', 'width_pt_2x3', CUTMARK_LINE_PT_2X3)
 
-def load_lang_from_ini() -> str:
-    ini_path = get_ini_path()
-    if not ini_path.exists():
-        return ""
-    cp = configparser.ConfigParser()
-    try:
-        cp.read(ini_path, encoding="utf-8")
-        lang = cp.get("ui", "lang", fallback="").strip().lower()
-        return lang
-    except Exception:
-        # broken INI -> ignore
-        return ""
-
 def save_lang_to_ini(lang: str) -> None:
     cp = load_config()
     if not cp.has_section('ui'):
@@ -226,12 +425,23 @@ def save_lang_to_ini(lang: str) -> None:
     cp.set('ui', 'lang', lang)
     # Ensure cutmark defaults exist so users can edit them
     ensure_cutmark_defaults(cp)
+    # Ensure assets defaults exist so users can edit them
+    ensure_assets_defaults(cp)
     write_config(cp)
 
 def prompt_language_if_needed():
     global LANG
     cp = load_config()
     changed = ensure_cutmark_defaults(cp)
+    changed = ensure_assets_defaults(cp) or changed
+    changed = ensure_custom_format_defaults(cp) or changed
+
+    # Optional: gleich laden & an CARD_FORMATS anhängen (am Ende der Liste)
+    fmt6 = load_custom_format_from_config(cp)
+    if fmt6:
+        # Prüfen, ob ID 6 bereits existiert (Sicherheitsnetz)
+        if not any(f.get('id') == 6 for f in CARD_FORMATS):
+            CARD_FORMATS.append(fmt6)
 
     # 1) Try loading from INI first
     lang = cp.get('ui', 'lang', fallback='').strip().lower()
@@ -253,6 +463,8 @@ def prompt_language_if_needed():
 
     # Load cutmark settings into globals
     load_cutmarks_from_config(cp)
+    # Load asset settings into globals
+    load_assets_from_config(cp)
 
     # Persist INI if defaults were added or language was set
     if changed:
@@ -260,8 +472,15 @@ def prompt_language_if_needed():
 
 I18N = {
     "de": {
-        "choose_layout": "Layout wählen (3x3/2x3/Gutterfold/All) [All]: ",
-        "invalid_layout": "Bitte '3x3', '2x3', 'Gutterfold' oder 'All' eingeben.",
+        "choose_layout": "Layout wählen ({opts}) [All]: ",
+        "invalid_layout": "Bitte eines der angebotenen Layouts eingeben.",
+        "format_info_note": "Hinweis: 'Standard' verwendet Innenbilder ohne Beschnitt. 'Bleed' benötigt Bilder mit Beschnitt. 'Gutterfold' erstellt ein Falzlayout mit vorderer/hinterer Seite.",
+        "skip_2x5": "2x5 wird übersprungen: Kartenbilder haben keinen Bleed (mind. {minw}x{minh}) oder sind gemischt.",
+        "format_info_header": "Ausgewähltes Kartenformat: {name} ({w} x {h} mm)",
+        "format_info_sizes": "Erwartete Bildgrößen @300dpi: Innen {iw}x{ih} px, Bleed {bw}x{bh} px (Bleed = 1/8\" pro Seite)",
+        "choose_card_format": "Kartenformat wählen (Zahl eingeben, Enter = Poker):",
+        "choose_card_format_prompt": "Auswahl [1]: ",
+        "invalid_card_format": "Ungültige Auswahl. Bitte eine Zahl aus der Liste eingeben.",
         "choose_format": "Papierformat waehlen (A4/Letter/Both) [Both]: ",
         "invalid_format": "Bitte 'A4', 'Letter' oder 'Both' eingeben.",
         "ask_folder": "Pfad zum Ordner mit PNG/JPG Kartenbildern: ",
@@ -275,14 +494,28 @@ I18N = {
         "ask_out_base": "Ausgabedatei Basisname (ohne .pdf) [{default}]: ",
         "no_cards": "Keine Karten gefunden. Erwartet: Dateinamen enden auf 'a' oder 'b' (z.B. card01a.png / card01b.png) ODER enden auf '[face,<n>]' bzw. '[back,<n>]' (z.B. card01[face,001].png / card01[back,001].png).",
         "done": "Fertig! PDF erstellt: {path}",
-        "skip_2x3": "2x3 wird übersprungen: Kartenbilder haben keinen Bleed (mind. 825x1125) oder sind gemischt.",
-        "partial_2x3": "2x3: Erstelle nur Karten mit Bleed ({ok}/{total}), {skipped} übersprungen.",
+        "skip_2x3": "2x3 wird übersprungen: Kartenbilder haben keinen Bleed (mind. {minw}x{minh}) oder sind gemischt.",
+        "skip_gutterfold_no_backs": "Gutterfold wird übersprungen: Keine Rückseiten gefunden und keine Datei mit dem Namen '{name}' im Kartenordner.",
+        "using_cardback": "Keine Rückseiten gefunden – verwende '{file}' als gemeinsame Kartenrückseite für alle Karten.",
+        "skip_gutterfold_missing_backs": "Gutterfold wird übersprungen: Nicht für alle Vorderseiten wurde eine Rückseite gefunden. Fehlende Rückseiten für: {missing}",
+        "skip_bleed_due_to_small": "Bleed wird nicht erzeugt: Mindestens eine Datei unterschreitet die Bleed-Mindestgröße {minw}x{minh} Pixel ({count} Datei(en)). Diese Dateien werden übersprungen: {files}",
         "warn_too_small_upscale": "Hinweis: Mindestens ein Kartenbild ist kleiner als {minw}x{minh} Pixel ({count} Datei(en)). Es wird auf diese Größe hochskaliert: {files}",
-        "error_too_small": "Abbruch: Mindestens ein Kartenbild ist kleiner als {minw}x{minh} Pixel ({count} Datei(en)): {files}",
+        "error_gutterfold_space": (
+            "Zu wenig Platz für Gutterfold: verfügbar {avail:.1f} pt, "
+            "benötigt {need:.1f} pt (Rand: {margin} cm; Kopf-Reserve: {top:.1f} pt; "
+        "Fuß-Reserve: {bottom:.1f} pt)."
+        ),
     },
     "en": {
-        "choose_layout": "Choose layout (3x3/2x3/Gutterfold/All) [All]: ",
-        "invalid_layout": "Please enter '3x3', '2x3', 'Gutterfold' or 'All'.",
+        "choose_layout": "Choose layout ({opts}) [All]: ",
+        "invalid_layout": "Please enter one of the offered layouts.",
+        "format_info_note": "Note: 'Standard' uses inner images (no bleed). 'Bleed' requires bleed images. 'Gutterfold' produces a fold layout with matching front/back alignment.",
+        "skip_2x5": "Skipping 2x5: card images do not have bleed (min {minw}x{minh}) or are mixed.",
+        "format_info_header": "Selected card format: {name} ({w} x {h} mm)",
+        "format_info_sizes": "Expected image sizes @300dpi: inner {iw}x{ih} px, bleed {bw}x{bh} px (bleed = 1/8\" per side)",
+        "choose_card_format": "Choose card format (enter number, Enter = Poker):",
+        "choose_card_format_prompt": "Selection [1]: ",
+        "invalid_card_format": "Invalid selection. Please enter a number from the list.",
         "choose_format": "Choose paper size (A4/Letter/Both) [Both]: ",
         "invalid_format": "Please enter 'A4', 'Letter' or 'Both'.",
         "ask_folder": "Path to folder with PNG/JPG card images: ",
@@ -296,14 +529,28 @@ I18N = {
         "ask_out_base": "Output base filename (without .pdf) [{default}]: ",
         "no_cards": "No cards found. Expected filenames ending with 'a' or 'b' (e.g. card01a.png / card01b.png) OR ending with '[face,<n>]' / '[back,<n>]' (e.g. card01[face,001].png / card01[back,001].png).",
         "done": "Done! PDF created: {path}",
-        "skip_2x3": "Skipping 2x3: card images do not have bleed (min 825x1125) or are mixed.",
-        "partial_2x3": "2x3: generating only cards with bleed ({ok}/{total}), {skipped} skipped.",
+        "skip_2x3": "Skipping 2x3: card images do not have bleed (min {minw}x{minh}) or are mixed.",
+        "skip_gutterfold_no_backs": "Skipping Gutterfold: no backs found and no file named '{name}' in the card folder.",
+        "using_cardback": "No backs found – using '{file}' as a shared card back for all cards.",
+        "skip_gutterfold_missing_backs": "Skipping Gutterfold: not all fronts have a back. Missing backs for: {missing}",
+        "skip_bleed_due_to_small": "Bleed will not be generated: at least one file is below the bleed minimum size {minw}x{minh} pixels ({count} file(s)). These files will be skipped: {files}",
         "warn_too_small_upscale": "Note: At least one card image is smaller than {minw}x{minh} pixels ({count} file(s)). It will be upscaled to this size: {files}",
-        "error_too_small": "Abort: at least one card image is smaller than {minw}x{minh} pixels ({count} file(s)): {files}",
+        "error_gutterfold_space": (
+            "Not enough space for Gutterfold: available {avail:.1f} pt, "
+            "required {need:.1f} pt (margin: {margin} cm; top reserve: {top:.1f} pt; "
+            "bottom reserve: {bottom:.1f} pt)."
+        ),
     },
     "fr": {
-        "choose_layout": "Choisir la mise en page (3x3/2x3/Gutterfold/All) [All] : ",
-        "invalid_layout": "Veuillez entrer '3x3', '2x3', 'Gutterfold' ou 'All'.",
+        "choose_layout": "Choisissez un layout ({opts}) [All] : ",
+        "invalid_layout": "Veuillez saisir l’un des layouts proposés.",
+        "format_info_note": "Remarque : 'Standard' utilise des images internes sans fond perdu. 'Bleed' nécessite des images avec fond perdu. 'Gutterfold' crée une mise en page pliée avec alignement recto/verso.",
+        "skip_2x5": "2x5 ignoré : les images n’ont pas de fond perdu (min {minw}x{minh}) ou sont mélangées.",
+        "format_info_header": "Format de carte sélectionné : {name} ({w} x {h} mm)",
+        "format_info_sizes": "Tailles d'image attendues @300dpi : intérieur {iw}x{ih} px, fond perdu {bw}x{bh} px (fond perdu = 1/8\" par côté)",
+        "choose_card_format": "Choisir le format des cartes (entrer un numéro, Entrée = Poker) :",
+        "choose_card_format_prompt": "Sélection [1] : ",
+        "invalid_card_format": "Sélection invalide. Veuillez entrer un numéro de la liste.",
         "choose_format": "Choisir le format (A4/Letter/Both) [Both] : ",
         "invalid_format": "Veuillez entrer 'A4', 'Letter' ou 'Both'.",
         "ask_folder": "Chemin du dossier contenant les images PNG/JPG : ",
@@ -317,14 +564,28 @@ I18N = {
         "ask_out_base": "Nom de fichier de sortie (sans .pdf) [{default}] : ",
         "no_cards": "Aucune carte trouvée. Attendu : noms finissant par 'a' ou 'b' (ex. card01a.png / card01b.png) OU finissant par '[face,<n>]' / '[back,<n>]' (ex. card01[face,001].png / card01[back,001].png).",
         "done": "Terminé ! PDF créé : {path}",
-        "skip_2x3": "2x3 ignoré : les images n'ont pas de fond perdu (min 825x1125) ou sont mélangées.",
-        "partial_2x3": "2x3 : génération uniquement des cartes avec fond perdu ({ok}/{total}), {skipped} ignorées.",
+        "skip_2x3": "2x3 ignoré : les images n'ont pas de fond perdu (min {minw}x{minh}) ou sont mélangées.",
+        "skip_gutterfold_no_backs": "Gutterfold ignoré : aucun verso trouvé et aucun fichier nommé '{name}' dans le dossier.",
+        "using_cardback": "Aucun verso trouvé – utilisation de '{file}' comme verso commun pour toutes les cartes.",
+        "skip_gutterfold_missing_backs": "Gutterfold ignoré : toutes les faces n'ont pas de verso. Versos manquants pour : {missing}",
+        "skip_bleed_due_to_small": "Le format avec fond perdu ne sera pas généré : au moins un fichier est en dessous du minimum {minw}x{minh} px ({count} fichier(s)). Fichiers ignorés : {files}",
         "warn_too_small_upscale": "Note : au moins une image est plus petite que {minw}x{minh} pixels ({count} fichier(s)). Elle sera agrandie à cette taille : {files}",
-        "error_too_small": "Arrêt : au moins une image est plus petite que {minw}x{minh} pixels ({count} fichier(s)) : {files}",
+        "error_gutterfold_space": (
+            "Espace insuffisant pour le Gutterfold : {avail:.1f} pt disponibles, "
+            "il en faut {need:.1f} pt (marge : {margin} cm ; réserve supérieure : {top:.1f} pt ; "
+            "réserve inférieure : {bottom:.1f} pt)."
+        ),
     },
     "es": {
-        "choose_layout": "Elegir diseño (3x3/2x3/Gutterfold/All) [All]: ",
-        "invalid_layout": "Introduce '3x3', '2x3', 'Gutterfold' o 'All'.",
+        "choose_layout": "Elija un layout ({opts}) [All]: ",
+        "invalid_layout": "Introduzca uno de los layouts ofrecidos.",
+        "format_info_note": "Nota: 'Standard' utiliza imágenes internas sin sangrado. 'Bleed' requiere imágenes con sangrado. 'Gutterfold' crea un diseño plegado con alineación anverso/reverso.",
+        "skip_2x5": "Omitiendo 2x5: las imágenes no tienen sangrado (mín {minw}x{minh}) o están mezcladas.",
+        "format_info_header": "Formato de carta seleccionado: {name} ({w} x {h} mm)",
+        "format_info_sizes": "Tamaños de imagen esperados @300dpi: interior {iw}x{ih} px, sangrado {bw}x{bh} px (sangrado = 1/8\" por lado)",
+        "choose_card_format": "Elegir formato de carta (número, Enter = Poker):",
+        "choose_card_format_prompt": "Selección [1]: ",
+        "invalid_card_format": "Selección inválida. Introduce un número de la lista.",
         "choose_format": "Elegir formato (A4/Letter/Both) [Both]: ",
         "invalid_format": "Por favor, introduce 'A4', 'Letter' o 'Both'.",
         "ask_folder": "Ruta a la carpeta con imágenes PNG/JPG: ",
@@ -338,14 +599,28 @@ I18N = {
         "ask_out_base": "Nombre base de salida (sin .pdf) [{default}]: ",
         "no_cards": "No se encontraron cartas. Se esperan nombres que terminen en 'a' o 'b' (p.ej. card01a.png / card01b.png) O que terminen en '[face,<n>]' / '[back,<n>]' (p.ej. card01[face,001].png / card01[back,001].png).",
         "done": "¡Listo! PDF creado: {path}",
-        "skip_2x3": "Omitiendo 2x3: las imágenes no tienen sangrado (mín 825x1125) o están mezcladas.",
-        "partial_2x3": "2x3: generando solo cartas con sangrado ({ok}/{total}), {skipped} omitidas.",
+        "skip_2x3": "Omitiendo 2x3: las imágenes no tienen sangrado (mín {minw}x{minh}) o están mezcladas.",
+        "skip_gutterfold_no_backs": "Se omite Gutterfold: no se encontraron reversos y no hay un archivo llamado '{name}' en la carpeta.",
+        "using_cardback": "No se encontraron reversos: se usa '{file}' como reverso común para todas las cartas.",
+        "skip_gutterfold_missing_backs": "Se omite Gutterfold: no todas las caras tienen reverso. Reversos faltantes para: {missing}",
+        "skip_bleed_due_to_small": "No se generará el formato con sangrado: al menos un archivo está por debajo del mínimo {minw}x{minh} píxeles ({count} archivo(s)). Archivos omitidos: {files}",
         "warn_too_small_upscale": "Nota: al menos una imagen es más pequeña que {minw}x{minh} píxeles ({count} archivo(s)). Se ampliará a ese tamaño: {files}",
-        "error_too_small": "Abortando: al menos una imagen es más pequeña que {minw}x{minh} píxeles ({count} archivo(s)): {files}",
+        "error_gutterfold_space": (
+            "No hay suficiente espacio para el Gutterfold: {avail:.1f} pt disponibles, "
+            "se requieren {need:.1f} pt (margen: {margin} cm; reserva superior: {top:.1f} pt; "
+            "reserva inferior: {bottom:.1f} pt)."
+        ),
     },
     "it": {
-        "choose_layout": "Scegli layout (3x3/2x3/Gutterfold/All) [All]: ",
-        "invalid_layout": "Inserisci '3x3', '2x3', 'Gutterfold' o 'All'.",
+        "choose_layout": "Scegli un layout ({opts}) [All]: ",
+        "invalid_layout": "Inserire uno dei layout proposti.",
+        "format_info_note": "Nota: 'Standard' utilizza immagini interne senza abbondanza. 'Bleed' richiede immagini con abbondanza. 'Gutterfold' crea un layout piegato con allineamento fronte/retro.",
+        "skip_2x5": "Salto 2x5: le immagini non hanno abbondanza (min {minw}x{minh}) o sono miste.",
+        "format_info_header": "Formato carta selezionato: {name} ({w} x {h} mm)",
+        "format_info_sizes": "Dimensioni immagine attese @300dpi: interno {iw}x{ih} px, abbondanza {bw}x{bh} px (abbondanza = 1/8\" per lato)",
+        "choose_card_format": "Scegli il formato delle carte (numero, Invio = Poker):",
+        "choose_card_format_prompt": "Selezione [1]: ",
+        "invalid_card_format": "Selezione non valida. Inserisci un numero dalla lista.",
         "choose_format": "Scegli formato (A4/Letter/Both) [Both]: ",
         "invalid_format": "Inserisci 'A4', 'Letter' o 'Both'.",
         "ask_folder": "Percorso della cartella con immagini PNG/JPG: ",
@@ -359,10 +634,17 @@ I18N = {
         "ask_out_base": "Nome base output (senza .pdf) [{default}]: ",
         "no_cards": "Nessuna carta trovata. Atteso: nomi che terminano con 'a' o 'b' (es. card01a.png / card01b.png) O che terminano con '[face,<n>]' / '[back,<n>]' (es. card01[face,001].png / card01[back,001].png).",
         "done": "Fatto! PDF creato: {path}",
-        "skip_2x3": "Salto 2x3: le immagini non hanno abbondanza (min 825x1125) o sono miste.",
-        "partial_2x3": "2x3: genero solo carte con abbondanza ({ok}/{total}), {skipped} saltate.",
+        "skip_2x3": "Salto 2x3: le immagini non hanno abbondanza (min {minw}x{minh}) o sono miste.",
+        "skip_gutterfold_no_backs": "Salto Gutterfold: nessun retro trovato e nessun file chiamato '{name}' nella cartella.",
+        "using_cardback": "Nessun retro trovato – uso '{file}' come retro comune per tutte le carte.",
+        "skip_gutterfold_missing_backs": "Salto Gutterfold: non tutte le fronti hanno un retro. Retro mancanti per: {missing}",
+        "skip_bleed_due_to_small": "Il layout con abbondanza non verrà generato: almeno un file è sotto il minimo {minw}x{minh} pixel ({count} file). File saltati: {files}",
         "warn_too_small_upscale": "Nota: almeno un'immagine è più piccola di {minw}x{minh} pixel ({count} file). Verrà ingrandita a questa dimensione: {files}",
-        "error_too_small": "Interruzione: almeno un'immagine è più piccola di {minw}x{minh} pixel ({count} file): {files}",
+        "error_gutterfold_space": (
+            "Spazio insufficiente per il Gutterfold: disponibili {avail:.1f} pt, "
+            "necessari {need:.1f} pt (margine: {margin} cm; riserva superiore: {top:.1f} pt; "
+            "riserva inferiore: {bottom:.1f} pt)."
+        ),
     },
 }
 
@@ -572,17 +854,20 @@ def preprocess_card_image_for_pdf(img_path: Path, quality_key: str, box_inches: 
 def analyze_card_images(pairs: List[Tuple[str, Optional[Path], Optional[Path]]]):
     """
     Inspect card images (only the a/b card files, NOT logo) and return:
-      - sizes: dict Path->(w,h)
-      - too_small: list of Paths where w<INNER_W_PX or h<INNER_H_PX
-      - eligible_2x3_pairs: list of pairs where all existing sides are >= BLEED_W_PX x BLEED_H_PX
-      - skipped_2x3_count: how many pairs were excluded from 2x3
-    If PIL is not available, returns (None, [], pairs, 0).
+    - sizes: dict Path->(w,h)
+    - too_small: list of Paths where w<INNER_W_PX or h<INNER_H_PX (inner/trim threshold)
+    - too_small_bleed: list of Paths where w<BLEED_W_PX or h<BLEED_H_PX (bleed threshold)
+    - eligible_2x3_pairs: list of pairs where all existing sides are >= BLEED_W_PX x BLEED_H_PX
+    - skipped_2x3_count: how many pairs were excluded from 2x3
+    If PIL is not available, returns (None, [], [], pairs, 0).
     """
+
     if Image is None:
         # Cannot inspect sizes without PIL -> safest behavior: disable 2x3 and skip size-based cropping checks.
-        return None, [], [], len(pairs)
+        return None, [], [], [], len(pairs)
     sizes = {}
     too_small = []
+    too_small_bleed = []
     # cache sizes
     def get_size(p: Path):
         if p in sizes:
@@ -605,6 +890,9 @@ def analyze_card_images(pairs: List[Tuple[str, Optional[Path], Optional[Path]]])
             w, h = get_size(p)
             if w < INNER_W_PX or h < INNER_H_PX:
                 too_small.append(p)
+                
+            if w < BLEED_W_PX or h < BLEED_H_PX:
+                too_small_bleed.append(p)
         # 2x3 eligibility: all existing sides must have bleed dimensions
         ok_bleed = True
         for p in (a, b):
@@ -618,26 +906,25 @@ def analyze_card_images(pairs: List[Tuple[str, Optional[Path], Optional[Path]]])
             eligible.append((base, a, b))
         else:
             skipped += 1
-
-    return sizes, too_small, eligible, skipped
+    return sizes, too_small, too_small_bleed, eligible, skipped
 
 # =========================================================
 # Prompts
 # =========================================================
-def prompt_layout() -> List[str]:
+def prompt_layout_dynamic() -> List[str]:
+    opts_str = "Standard/Bleed/Gutterfold/All"
     while True:
-        raw = input(t("choose_layout")).strip().lower()
-        if raw == "":
-            return ["3x3", "2x3", "gutterfold"]
-        if raw in ("3x3", "3", "3x"):
-            return ["3x3"]
-        if raw in ("2x3", "2", "2x"):
-            return ["2x3"]
+        raw = input(t("choose_layout", opts=opts_str)).strip().lower()
+        if raw in ("", "all", "a"):
+            return ["standard", "bleed", "gutterfold"]
+        if raw in ("standard", "s", "3x3", "3x4", "3"):
+            return ["standard"]
+        if raw in ("bleed", "b", "2x3", "2x5", "2"):
+            return ["bleed"]
         if raw in ("gutterfold", "g", "gf"):
             return ["gutterfold"]
-        if raw in ("both", "b", "all"):
-            return ["3x3", "2x3", "gutterfold"]
         print(t("invalid_layout"))
+
 
 def prompt_pagesize_mode():
     while True:
@@ -781,6 +1068,25 @@ def find_card_pairs(folder: Path) -> List[Tuple[str, Optional[Path], Optional[Pa
 
     return result
 
+def find_named_image_in_folder(folder: Path, basename: str) -> Optional[Path]:
+    """Find an image file in folder with stem matching basename (Windows-typical: case-insensitive).
+    Accepts any supported extension (.png/.jpg/.jpeg). Returns first match in deterministic order.
+    """
+    if not basename:
+        return None
+    want = basename.strip()
+    if not want:
+        return None
+    want_l = want.lower()
+    ext_rank = {'.png': 0, '.jpg': 1, '.jpeg': 2}
+    candidates = [p for p in folder.iterdir()
+                  if p.is_file() and p.suffix.lower() in SUPPORTED_EXT and p.stem.lower() == want_l]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda p: (ext_rank.get(p.suffix.lower(), 9), p.name.lower()))
+    return candidates[0]
+
+
 def chunk(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i:i + n]
@@ -812,6 +1118,75 @@ def fit_logo_with_constraints(logo_path: Path, max_w: float, max_h: float) -> Tu
 def compute_grid_origin_centered(page_w: float, page_h: float, grid_w: float, grid_h: float) -> Tuple[float, float]:
     return (page_w - grid_w) / 2.0, (page_h - grid_h) / 2.0
 
+# =========================================================
+# Zentrierung mit druckfreiem Rand + Reserven (NEU)
+# =========================================================
+def compute_grid_origin_centered_with_margins(
+    page_w: float, page_h: float,
+    grid_w: float, grid_h: float,
+    margins: Dict[str, float],
+    top_reserved_pt: float,
+    bottom_reserved_pt: float,
+    left_reserved_pt: float = 0.0,
+    right_reserved_pt: float = 0.0
+) -> Tuple[float, float]:
+    # Verfügbarer Bereich nach Abzug von Rändern UND Reserven
+    avail_w = page_w - margins["left"] - margins["right"] - left_reserved_pt - right_reserved_pt
+    avail_h = page_h - margins["top"] - margins["bottom"] - top_reserved_pt - bottom_reserved_pt
+
+    if avail_w <= 0 or avail_h <= 0:
+        # Fallback: direkt oberhalb/links der Reserven platzieren
+        return margins["left"] + left_reserved_pt, margins["bottom"] + bottom_reserved_pt
+
+    # WICHTIG: Ursprung des Zentrierbereichs über Reserven legen!
+    x = margins["left"] + left_reserved_pt + (avail_w - grid_w) / 2.0
+    y = margins["bottom"] + bottom_reserved_pt + (avail_h - grid_h) / 2.0
+    return x, y
+
+# =========================================================
+# Maximiere cols/rows innerhalb der verfügbaren Fläche (NEU)
+# =========================================================
+def compute_max_grid_counts(
+    page_w: float, page_h: float,
+    box_w: float, box_h: float,
+    margins: Dict[str, float],
+    logo_path: Optional[Path],
+    bottom_reserved_pt: float,
+    extra_vertical_pt: float = 0.0,
+    left_reserved_pt: float = RESERVE_LEFT_PT,
+    right_reserved_pt: float = RESERVE_RIGHT_PT,
+    top_fixed_reserved_pt: float = RESERVE_TOP_PT
+) -> Tuple[int, int, float, float, float, float, float]:
+   
+    # WICHTIG: Grid-Zentrierung soll nicht durch Logo-Reserve verkleinert werden.
+    # Daher fließt nur der FIXE Kopfbereich (top_fixed_reserved_pt) in die
+    # Platzberechnung ein; das Logo wird später über dem Grid skaliert gezeichnet.
+    top_res = top_fixed_reserved_pt
+
+    avail_w = page_w - margins["left"] - margins["right"] - left_reserved_pt - right_reserved_pt
+    avail_h = page_h - margins["top"] - margins["bottom"] - top_res - bottom_reserved_pt
+
+    if avail_w <= 0 or avail_h <= 0:
+        return (1, 1,
+                margins["left"] + left_reserved_pt,
+                margins["bottom"] + bottom_reserved_pt,
+                box_w, box_h + extra_vertical_pt,
+                margins["bottom"] + bottom_reserved_pt + box_h + extra_vertical_pt)
+
+    rows = max(1, int((avail_h - extra_vertical_pt) // box_h))
+    cols = max(1, int(avail_w // box_w))
+    grid_w = cols * box_w
+    grid_h = rows * box_h + extra_vertical_pt
+
+    x0, y0 = compute_grid_origin_centered_with_margins(
+        page_w, page_h, grid_w, grid_h,
+        margins,
+        top_res, bottom_reserved_pt,
+        left_reserved_pt, right_reserved_pt
+    )
+    grid_top_y = y0 + grid_h
+    return cols, rows, x0, y0, grid_w, grid_h, grid_top_y
+
 
 # =========================================================
 # Drawing: bottom + logo
@@ -835,26 +1210,6 @@ def draw_bottom_line(c: canvas.Canvas, page_w: float,
 
     c.drawRightString(page_w - RIGHT_MARGIN, y, page_label)
     c.restoreState()
-
-def draw_logo_above_grid(c: canvas.Canvas, logo_path: Path, page_w: float, page_h: float, grid_top_y: float):
-    lw, lh = fit_logo_with_constraints(logo_path, LOGO_MAX_W, LOGO_MAX_H)
-    y = grid_top_y + LOGO_GAP_TO_GRID
-
-    # if it doesn't fit to top, scale down further
-    max_h_available = page_h - y
-    if max_h_available < lh:
-        if lh > 0:
-            scale = max_h_available / lh
-            lw *= scale
-            lh *= scale
-        if lh <= 1:
-            return
-
-    x = (page_w - lw) / 2.0
-    c.drawImage(ImageReader(str(logo_path)), x, y, width=lw, height=lh,
-                preserveAspectRatio=True, mask="auto")
-
-
 
 # =========================================================
 # Layout Gutterfold (example-like): 4 rows, 2 columns (a left / b right)
@@ -927,22 +1282,6 @@ def draw_gutter_bridge_marks(
         c.line(x, y_gutter_bottom, x, y_gutter_top)
     c.restoreState()
 
-def draw_inner_cutmarks_bottom_to_fold(
-    c: canvas.Canvas,
-    x_positions: List[float],
-    y_bottom: float,
-    y_fold: float,
-):
-    """
-    Draw vertical cut marks at given x positions from bottom edge up to fold line.
-    Intended for the inner boundaries between cards in the bottom row.
-    """
-    c.saveState()
-    c.setLineWidth(CUTMARK_LINE_PT_STD)
-    for x in x_positions:
-        c.line(x, y_bottom, x, y_fold)
-    c.restoreState()
-
 def draw_cutmarks_gutterfold(
     c: canvas.Canvas,
     x0: float, y0: float,
@@ -969,86 +1308,56 @@ def draw_cutmarks_gutterfold(
 
     c.restoreState()
 
-def place_images_gutterfold_2x4(
-    c: canvas.Canvas,
-    pairs_group: List[Tuple[str, Optional[Path], Optional[Path]]],
-    x0: float, y0: float,
-    card_w: float, card_h: float,
-    cols: int,
-    fold_gutter: float,
-    quality_key: str,
-    card_box_inches: Tuple[float, float],
-):
-    """
-    NEW gutterfold: 2 rows x 4 cols (bündig).
-    Top row: fronts (a) normal.
-    Bottom row: backs (b) rotated 180° (no mirror).
-    """
-
-    per_page = cols  # 4 Paare pro Seite
-    padded = pairs_group + [("", None, None)] * (per_page - len(pairs_group))
-
-    # Grid geometry (bündig: kein col_gap)
-    grid_w = cols * card_w
-    grid_h = 2 * card_h + fold_gutter
-
-    # Row y positions (y0 is bottom of full grid)
-    y_bottom = y0
-    y_top = y0 + card_h + fold_gutter
-
-    # Fold line in the middle of the gutter area
-    fold_y = y0 + card_h + fold_gutter / 2.0
-
-    for col in range(cols):
-        _base, front, back = padded[col]
-        x = x0 + col * card_w  # bündig
-
-        # Front (top)
-        if front and front.exists():
-            processed_f = preprocess_card_image_for_pdf(front, quality_key, card_box_inches)
-            draw_image_transformed(
-                c, processed_f,
-                x, y_top,
-                card_w, card_h,
-                rotate_deg=0,
-                mirror_x=False
-            )
-
-        # Back (bottom): 180° Rotation, keine Spiegelung
-        if back and back.exists():
-            processed_b = preprocess_card_image_for_pdf(back, quality_key, card_box_inches)
-            draw_image_transformed(
-                c, processed_b,
-                x, y_bottom,
-                card_w, card_h,
-                rotate_deg=180,
-                mirror_x=False
-            )
-
-    # Fold line
-    if GF_DRAW_FOLD_LINE:
-        draw_gutterfold_line_horizontal(c, x0, fold_y, grid_w)
-
-    # Outside-only cutmarks (only outer y edges, to avoid horizontal marks at gutter edges)
-    x_marks = [x0 + j * card_w for j in range(cols + 1)]
-    y_edges = sorted(set([y0, y0 + card_h, y0 + card_h + fold_gutter, y0 + grid_h]))
-    draw_cutmarks_gutterfold(
-        c,
-        x0=x0, y0=y0,
-        grid_w=grid_w, grid_h=grid_h,
-        y_edges=y_edges,
-        x_marks=x_marks
-    )
-
-    # Gutter bridge marks (vertical lines across gutter, incl. outer edges)
-    y_gutter_bottom = y0 + card_h
-    y_gutter_top = y0 + card_h + fold_gutter
-    bridge_x = [x0 + j * card_w for j in range(0, cols + 1)]  # includes left/right edges
-    draw_gutter_bridge_marks(c, bridge_x, y_gutter_bottom, y_gutter_top)
-
 # =========================================================
 # Layout 3x3: inner crosses + outer marks between cards
 # =========================================================
+def draw_inner_crosses_grid(c: canvas.Canvas, x0: float, y0: float, card_w: float, card_h: float, cols: int, rows: int):
+    c.saveState()
+    c.setLineWidth(CUTMARK_LINE_PT_STD)
+    half = CUTMARK_LEN_PT_STD / 2.0
+    xs = [x0 + j * card_w for j in range(1, cols)]
+    ys = [y0 + i * card_h for i in range(1, rows)]
+    for x in xs:
+        for y in ys:
+            c.line(x - half, y, x + half, y)
+            c.line(x, y - half, x, y + half)
+    c.restoreState()
+
+def draw_outer_marks_grid(c: canvas.Canvas, x0: float, y0: float, card_w: float, card_h: float, cols: int, rows: int):
+    c.saveState()
+    c.setLineWidth(CUTMARK_LINE_PT_STD)
+    half = CUTMARK_LEN_PT_STD / 2.0
+    grid_w = cols * card_w
+    grid_h = rows * card_h
+    xs = [x0 + j * card_w for j in range(1, cols)]
+    ys = [y0 + i * card_h for i in range(1, rows)]
+    y_bottom = y0
+    y_top = y0 + grid_h
+    x_left = x0
+    x_right = x0 + grid_w
+    for x in xs:
+        c.line(x, y_bottom - half, x, y_bottom + half)
+        c.line(x, y_top - half, x, y_top + half)
+    for y in ys:
+        c.line(x_left - half, y, x_left + half, y)
+        c.line(x_right - half, y, x_right + half, y)
+    c.restoreState()
+
+def draw_corner_marks_grid(c: canvas.Canvas, x0: float, y0: float, card_w: float, card_h: float, cols: int, rows: int):
+    c.saveState()
+    c.setLineWidth(CUTMARK_LINE_PT_STD)
+    half = CUTMARK_LEN_PT_STD / 2.0
+    grid_w = cols * card_w
+    grid_h = rows * card_h
+    x_left = x0
+    x_right = x0 + grid_w
+    y_bottom = y0
+    y_top = y0 + grid_h
+    for (x, y) in ((x_left, y_bottom), (x_right, y_bottom), (x_left, y_top), (x_right, y_top)):
+        c.line(x - half, y, x + half, y)
+        c.line(x, y - half, x, y + half)
+    c.restoreState()
+
 def draw_inner_crosses_3x3(c: canvas.Canvas, x0: float, y0: float, card_w: float, card_h: float):
     c.saveState()
     c.setLineWidth(CUTMARK_LINE_PT_STD)
@@ -1120,6 +1429,36 @@ def draw_corner_marks_3x3(c: canvas.Canvas, x0: float, y0: float, card_w: float,
 
     c.restoreState()
 
+def place_images_grid_inner(c: canvas.Canvas,
+                            img_paths: List[Optional[Path]],
+                            x0: float, y0: float,
+                            card_w: float, card_h: float,
+                            cols: int, rows: int,
+                            is_back: bool,
+                            quality_key: str,
+                            card_box_inches: Tuple[float, float]):
+    per_page = cols * rows
+    for idx, img_path in enumerate(img_paths[:per_page]):
+        row = idx // cols
+        col = idx % cols
+        # Rückseite: Spalten spiegeln
+        if is_back:
+            col = (cols - 1) - col
+        x = x0 + col * card_w
+        y = y0 + (rows - 1 - row) * card_h
+        if img_path is None or not img_path.exists():
+            continue
+        processed = preprocess_card_image_for_pdf(img_path, quality_key, card_box_inches)
+        draw_w, draw_h = fit_image_into_box(processed, card_w, card_h)
+        dx = x + (card_w - draw_w) / 2.0
+        dy = y + (card_h - draw_h) / 2.0
+        c.drawImage(ImageReader(str(processed)), dx, dy, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
+
+    draw_inner_crosses_grid(c, x0, y0, card_w, card_h, cols, rows)
+    draw_outer_marks_grid(c, x0, y0, card_w, card_h, cols, rows)
+    draw_corner_marks_grid(c, x0, y0, card_w, card_h, cols, rows)
+
+# Abwärtskompatibel: 3x3 ruft generisch auf
 def place_images_3x3(c: canvas.Canvas,
                      img_paths: List[Optional[Path]],
                      x0: float, y0: float,
@@ -1168,20 +1507,21 @@ def get_2x3_box_size_pt() -> Tuple[float, float]:
     return box_w, box_h
 
 def get_2x3_box_inches() -> Tuple[float, float]:
-    # Inner poker: 2.5"x3.5", outer scales with same factor as above -> 2.75"x3.75"
-    return 2.5 * (BLEED_W_PX / INNER_W_PX), 3.5 * (BLEED_H_PX / INNER_H_PX)
+    # Inner card size in inches is derived from the selected format.
+    w_in = POKER_W_PT / 72.0
+    h_in = POKER_H_PT / 72.0
+    return w_in * (BLEED_W_PX / INNER_W_PX), h_in * (BLEED_H_PX / INNER_H_PX)
 
-def draw_cutmarks_2x3_outer_only(c: canvas.Canvas,
-                                 x0: float, y0: float,
-                                 cols: int, rows: int,
-                                 box_w: float, box_h: float):
+def draw_cutmarks_bleed_outer_only(c: canvas.Canvas,
+                                   x0: float, y0: float,
+                                   cols: int, rows: int,
+                                   box_w: float, box_h: float):
     """
     Draw ONLY outside marks around the raster, but at all poker cutline positions.
-    Marks are 20pt long, 1pt thick, and placed outside the grid.
+    Works for any cols x rows bleed grid (e.g., 3x2, 5x2).
     """
     c.saveState()
     c.setLineWidth(CUTMARK_LINE_PT_2X3)
-
     grid_w = cols * box_w
     grid_h = rows * box_h
     x_left = x0
@@ -1189,47 +1529,39 @@ def draw_cutmarks_2x3_outer_only(c: canvas.Canvas,
     y_bottom = y0
     y_top = y0 + grid_h
 
-    # Fractions of poker cutlines within ONE box
-    # left cut = 37 px from left
-    # right cut = 37 + inner_w (750) = 787 px from left
-    fx_left = BLEED_LEFT_TOP_PX / BLEED_W_PX
+    # Fractions of poker cutlines within ONE bleed box
+    fx_left  = BLEED_LEFT_TOP_PX / BLEED_W_PX
     fx_right = (BLEED_LEFT_TOP_PX + INNER_W_PX) / BLEED_W_PX
-
-    # bottom cut = 38 px from bottom (because bottom border is 38)
-    # top cut = bottom + inner_h (1050) = 1088 px from bottom
     fy_bottom = BLEED_RIGHT_BOTTOM_PX / BLEED_H_PX
-    fy_top = (BLEED_RIGHT_BOTTOM_PX + INNER_H_PX) / BLEED_H_PX
+    fy_top    = (BLEED_RIGHT_BOTTOM_PX + INNER_H_PX) / BLEED_H_PX
 
-    # Collect all global x cut positions (two per column)
     x_cuts = []
     for j in range(cols):
         box_left = x0 + j * box_w
-        x_cuts.append(box_left + fx_left * box_w)
+        x_cuts.append(box_left + fx_left  * box_w)
         x_cuts.append(box_left + fx_right * box_w)
 
-    # Collect all global y cut positions (two per row)
     y_cuts = []
     for i in range(rows):
         box_bottom = y0 + i * box_h
         y_cuts.append(box_bottom + fy_bottom * box_h)
-        y_cuts.append(box_bottom + fy_top * box_h)
+        y_cuts.append(box_bottom + fy_top    * box_h)
 
-    # Draw vertical marks (top and bottom) OUTSIDE ONLY
     L = CUTMARK_LEN_PT_2X3
     for x in x_cuts:
-        # bottom: from y_bottom - L to y_bottom
         c.line(x, y_bottom - L, x, y_bottom)
-        # top: from y_top to y_top + L
-        c.line(x, y_top, x, y_top + L)
-
-    # Draw horizontal marks (left and right) OUTSIDE ONLY
+        c.line(x, y_top,       x, y_top + L)
     for y in y_cuts:
-        # left: from x_left - L to x_left
         c.line(x_left - L, y, x_left, y)
-        # right: from x_right to x_right + L
-        c.line(x_right, y, x_right + L, y)
-
+        c.line(x_right,   y, x_right + L, y)
     c.restoreState()
+
+def draw_cutmarks_2x3_outer_only(c: canvas.Canvas,
+                                 x0: float, y0: float,
+                                 cols: int, rows: int,
+                                 box_w: float, box_h: float):
+    # Weiterleitung auf generalisierte Funktion
+    draw_cutmarks_bleed_outer_only(c, x0, y0, cols, rows, box_w, box_h)
 
 def place_images_2x3(c: canvas.Canvas,
                      img_paths: List[Optional[Path]],
@@ -1238,41 +1570,75 @@ def place_images_2x3(c: canvas.Canvas,
                      is_back: bool,
                      quality_key: str,
                      card_box_inches: Tuple[float, float]):
-    """
-    2 rows x 3 cols. No gaps.
-    Front: normal row-major order (top-left -> bottom-right).
-    Back: mirror over short edge -> vertical flip (swap rows).
-    """
-    cols = 3
-    rows = 2
+    place_images_bleed_grid(c, img_paths, x0, y0, box_w, box_h, cols=3, rows=2, is_back=is_back, quality_key=quality_key, card_box_inches=card_box_inches)
 
-    for idx, img_path in enumerate(img_paths[:6]):
-        row = idx // cols  # 0..1 (top row then bottom row in our logical order)
-        col = idx % cols   # 0..2
-
-        # Back side: flip vertically (short-edge duplex in landscape)
+def place_images_bleed_grid(c: canvas.Canvas,
+                            img_paths: List[Optional[Path]],
+                            x0: float, y0: float,
+                            box_w: float, box_h: float,
+                            cols: int, rows: int,
+                            is_back: bool,
+                            quality_key: str,
+                            card_box_inches: Tuple[float, float]):
+    per_page = cols * rows
+    for idx, img_path in enumerate(img_paths[:per_page]):
+        row = idx // cols
+        col = idx % cols
+        # Rückseite: Spalten spiegeln (Short-edge Duplex Verhalten wie 2x3)
         if is_back:
-            col = 2 - col
-            #row = (row - 1) - row
-
-        # Coordinate: y0 is bottom of grid, but row=0 should be top row visually
-        # For rows=2: top row y = y0 + 1*box_h, bottom row y = y0 + 0*box_h
+            col = (cols - 1) - col
         x = x0 + col * box_w
         y = y0 + (rows - 1 - row) * box_h
-
         if img_path is None or not img_path.exists():
             continue
-
         processed = preprocess_card_image_for_pdf(img_path, quality_key, card_box_inches, crop_bleed=False)
         draw_w, draw_h = fit_image_into_box(processed, box_w, box_h)
         dx = x + (box_w - draw_w) / 2.0
         dy = y + (box_h - draw_h) / 2.0
-        c.drawImage(ImageReader(str(processed)), dx, dy, width=draw_w, height=draw_h,
-                    preserveAspectRatio=True, mask="auto")
+        c.drawImage(ImageReader(str(processed)), dx, dy, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
 
-    # Only outer cut marks around raster
-    draw_cutmarks_2x3_outer_only(c, x0, y0, cols=3, rows=2, box_w=box_w, box_h=box_h)
+    draw_cutmarks_bleed_outer_only(c, x0, y0, cols=cols, rows=rows, box_w=box_w, box_h=box_h)
 
+def place_images_gutterfold_grid(c: canvas.Canvas,
+                                 pairs_group: List[Tuple[str, Optional[Path], Optional[Path]]],
+                                 x0: float, y0: float,
+                                 card_w: float, card_h: float,
+                                 cols: int,
+                                 fold_gutter: float,
+                                 quality_key: str,
+                                 card_box_inches: Tuple[float, float]):
+    per_page = cols
+    padded = pairs_group + [("", None, None)] * (per_page - len(pairs_group))
+    grid_w = cols * card_w
+    grid_h = 2 * card_h + fold_gutter
+
+    y_bottom = y0
+    y_top = y0 + card_h + fold_gutter
+    fold_y = y0 + card_h + fold_gutter / 2.0
+
+    for col in range(cols):
+        _base, front, back = padded[col]
+        x = x0 + col * card_w  # bündig
+
+        if front and front.exists():
+            processed_f = preprocess_card_image_for_pdf(front, quality_key, card_box_inches)
+            draw_image_transformed(c, processed_f, x, y_top, card_w, card_h, rotate_deg=0, mirror_x=False)
+
+        if back and back.exists():
+            processed_b = preprocess_card_image_for_pdf(back, quality_key, card_box_inches)
+            draw_image_transformed(c, processed_b, x, y_bottom, card_w, card_h, rotate_deg=180, mirror_x=False)
+
+    if GF_DRAW_FOLD_LINE:
+        draw_gutterfold_line_horizontal(c, x0, fold_y, grid_w)
+
+    x_marks = [x0 + j * card_w for j in range(cols + 1)]
+    y_edges = sorted(set([y0, y0 + card_h, y0 + card_h + fold_gutter, y0 + grid_h]))
+    draw_cutmarks_gutterfold(c, x0=x0, y0=y0, grid_w=grid_w, grid_h=grid_h, y_edges=y_edges, x_marks=x_marks)
+
+    y_gutter_bottom = y0 + card_h
+    y_gutter_top = y0 + card_h + fold_gutter
+    bridge_x = [x0 + j * card_w for j in range(0, cols + 1)]
+    draw_gutter_bridge_marks(c, bridge_x, y_gutter_bottom, y_gutter_top)
 
 # =========================================================
 # PDF generation
@@ -1284,152 +1650,215 @@ def generate_pdf(layout_key: str,
                  logo_path: Optional[Path],
                  copyright_name: Optional[str],
                  version_str: str,
-                 quality_key: str):
+                 quality_key: str,
+                 include_back_pages: bool = True):
+    """
+    Dynamische Layout-Erzeugung:
+      - 'standard' (Innenbilder, ohne Bleed, mit inneren Kreuzen + Außenmarken)
+      - 'bleed'    (Bleed-Box, NUR Außenmarken)
+      - 'gutterfold' (2 Reihen + Falzgürtel, Brückenmarken)
+    Legacy-Keys ('3x3','3x4','2x3','2x5') werden weiter akzeptiert.
+    """
+    lk = layout_key.strip().lower()
+    page_w, page_h = pagesize_tuple
 
-    layout_key = layout_key.strip().lower()
+    # --- STANDARD (Innenbilder) ---
+    if lk in ("standard", "3x3", "3x4"):
+        
+        def _compute_header_h_for_logo(logo_path, page_w, page_h, margins, grid_top_y):
+            if not logo_path:
+                return 0.0
+            lw, lh = fit_logo_with_constraints(logo_path, LOGO_MAX_W, LOGO_MAX_H)
+            max_header_h = max(0.0, page_h - margins["top"] - grid_top_y - LOGO_GAP_TO_GRID)
+            return min(lh, max_header_h)
 
-    # Layout selection influences page orientation + grid geometry + chunk size + placement rules
-    if layout_key == "3x3":
-        # Portrait
-        page_w, page_h = pagesize_tuple
         card_w, card_h = POKER_W_PT, POKER_H_PT
-        cols, rows = 3, 3
-        per_page = 9
-        card_box_inches = (2.5, 3.5)
 
-        grid_w = cols * card_w
-        grid_h = rows * card_h
-        x0, y0 = compute_grid_origin_centered(page_w, page_h, grid_w, grid_h)
-        grid_top_y = y0 + grid_h
-
+        # Logo IMMER zeichnen, aber NICHT als harte Reserve in der Platzberechnung
+        _apply_logo = bool(logo_path)
+        _logo_for_calc = None
+        cols, rows, x0, y0, grid_w, grid_h, grid_top_y = compute_max_grid_counts(
+            page_w, page_h, card_w, card_h,
+            MARGINS_PT, _logo_for_calc, BOTTOM_RESERVED_PT, extra_vertical_pt=0.0
+        )
+        
+        per_page = cols * rows
         c = create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
-
-        # NUR in dieser Konstellation: 3x3 auf Letter -> Fußzeile tiefer setzen
-        # pagesize_tuple ist bei Letter-Portrait exakt "letter"
+        # Optionaler Spezialfall: Letter + Standard (früher 3x3 tiefer)
         bottom_y_override = BOTTOM_Y_LETTER_3X3 if pagesize_tuple == letter else None
-
+        
         sheet_no = 0
         for group in chunk(pairs, per_page):
             sheet_no += 1
-            front_imgs = [front for (_base, front, _back) in group] + [None] * (per_page - len(group))
-            back_imgs = [back for (_base, _front, back) in group] + [None] * (per_page - len(group))
-
-            # Front (a)
-            place_images_3x3(c, front_imgs, x0, y0, card_w, card_h, is_back=False,
-                             quality_key=quality_key, card_box_inches=card_box_inches)
-            if logo_path:
-                draw_logo_above_grid(c, logo_path, page_w, page_h, grid_top_y)
-            #draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}a") 
-            
-            # Hier der Override nur für 3x3+Letter:
-            draw_bottom_line(
-                c, page_w, copyright_name, version_str,
-                f"{sheet_no}a",
-                y_override=bottom_y_override
-            )         
-            c.showPage()
-
-            # Back (b)
-            place_images_3x3(c, back_imgs, x0, y0, card_w, card_h, is_back=True,
-                             quality_key=quality_key, card_box_inches=card_box_inches)
-            if logo_path:
-                draw_logo_above_grid(c, logo_path, page_w, page_h, grid_top_y)
-            # draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}b")
-            
-            # Hier der Override nur für 3x3+Letter
-            draw_bottom_line(
-                c, page_w, copyright_name, version_str,
-                f"{sheet_no}b",
-                y_override=bottom_y_override
+            fronts = [a for (_n, a, _b) in group] + [None] * (per_page - len(group))
+            backs  = [b for (_n, _a, b) in group] + [None] * (per_page - len(group))
+            place_images_grid_inner(
+                c, fronts, x0, y0, card_w, card_h,
+                cols=cols, rows=rows, is_back=False,
+                quality_key=quality_key,
+                card_box_inches=(POKER_W_PT/72.0, POKER_H_PT/72.0)
             )
-            c.showPage()
 
+            
+            if _apply_logo:
+                header_h = _compute_header_h_for_logo(logo_path, page_w, page_h, MARGINS_PT, grid_top_y)
+                if header_h > 1.0:
+                    draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
+            draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}a",
+                             y_override=bottom_y_override)
+            c.showPage()
+            if include_back_pages and any(p for p in backs if p and p.exists()):
+                place_images_grid_inner(
+                    c, backs, x0, y0, card_w, card_h,
+                    cols=cols, rows=rows, is_back=True,
+                    quality_key=quality_key,
+                    card_box_inches=(POKER_W_PT/72.0, POKER_H_PT/72.0)
+                )   
+                if _apply_logo:
+                    header_h = _compute_header_h_for_logo(logo_path, page_w, page_h, MARGINS_PT, grid_top_y)
+                    if header_h > 1.0:
+                        draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
+
+                draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}b",
+                                 y_override=bottom_y_override)
+                c.showPage()
         c.save()
         return
 
-    if layout_key == "2x3":
-        # Landscape page
-        page_w, page_h = pagesize_tuple  # already landscape() outside
+    # --- BLEED (nur Außenmarken) ---
+    if lk in ("bleed", "2x3", "2x5"):
+        
+        def _compute_header_h_for_logo(logo_path, page_w, page_h, margins, grid_top_y):
+            if not logo_path:
+                return 0.0
+            lw, lh = fit_logo_with_constraints(logo_path, LOGO_MAX_W, LOGO_MAX_H)
+            max_header_h = max(0.0, page_h - margins["top"] - grid_top_y - LOGO_GAP_TO_GRID)
+            return min(lh, max_header_h)
+        
         box_w, box_h = get_2x3_box_size_pt()
-        cols, rows = 3, 2
-        per_page = 6
-        card_box_inches = get_2x3_box_inches()
-
-        grid_w = cols * box_w
-        grid_h = rows * box_h
-        x0, y0 = compute_grid_origin_centered(page_w, page_h, grid_w, grid_h)
-        grid_top_y = y0 + grid_h
-
+        # Logo IMMER zeichnen, aber NICHT als harte Reserve
+        _apply_logo = bool(logo_path)
+        _logo_for_calc = None
+        cols, rows, x0, y0, grid_w, grid_h, grid_top_y = compute_max_grid_counts(
+            page_w, page_h, box_w, box_h,
+            MARGINS_PT, _logo_for_calc, BOTTOM_RESERVED_PT, extra_vertical_pt=0.0
+        )
+        per_page = cols * rows
         c = create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
-
         sheet_no = 0
         for group in chunk(pairs, per_page):
             sheet_no += 1
-            front_imgs = [front for (_base, front, _back) in group] + [None] * (per_page - len(group))
-            back_imgs = [back for (_base, _front, back) in group] + [None] * (per_page - len(group))
+            fronts = [a for (_n, a, _b) in group] + [None] * (per_page - len(group))
+            backs  = [b for (_n, _a, b) in group] + [None] * (per_page - len(group))
+            place_images_bleed_grid(
+                c, fronts, x0, y0, box_w, box_h,
+                cols=cols, rows=rows, is_back=False,
+                quality_key=quality_key,
+                card_box_inches=get_2x3_box_inches()
+            )
 
-            # Front (a)
-            place_images_2x3(c, front_imgs, x0, y0, box_w, box_h, is_back=False,
-                             quality_key=quality_key, card_box_inches=card_box_inches)
-            if logo_path:
-                draw_logo_above_grid(c, logo_path, page_w, page_h, grid_top_y)
+
+            if _apply_logo:
+                header_h = _compute_header_h_for_logo(logo_path, page_w, page_h, MARGINS_PT, grid_top_y)
+                if header_h > 1.0:
+                    draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
             draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}a")
             c.showPage()
-
-            # Back (b) - short-edge flip: vertical mirror
-            place_images_2x3(c, back_imgs, x0, y0, box_w, box_h, is_back=True,
-                             quality_key=quality_key, card_box_inches=card_box_inches)
-            if logo_path:
-                draw_logo_above_grid(c, logo_path, page_w, page_h, grid_top_y)
-            draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}b")
-            c.showPage()
-
+            if include_back_pages and any(p for p in backs if p and p.exists()):
+                place_images_bleed_grid(
+                    c, backs, x0, y0, box_w, box_h,
+                    cols=cols, rows=rows, is_back=True,
+                    quality_key=quality_key,
+                   card_box_inches=get_2x3_box_inches()
+                )
+                if _apply_logo:
+                    header_h = _compute_header_h_for_logo(logo_path, page_w, page_h, MARGINS_PT, grid_top_y)
+                    if header_h > 1.0:
+                        draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
+                draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}b")
+                c.showPage()
         c.save()
         return
 
-    if layout_key == "gutterfold":
-        # NEW: 2 rows x 4 cols, one-sheet fold (front top / back bottom)
-        page_w, page_h = pagesize_tuple
-
-        card_w, card_h = POKER_W_PT, POKER_H_PT  # Poker bleibt unverändert [1](https://vgroup-my.sharepoint.com/personal/raoul_schaupp_vector_com/Documents/Microsoft%20Copilot%20Chat%20Files/PnP_PDF_CreatorV3.py)
-        cols = GF_COLS
-        per_page = cols  # 4 Paare pro Seite
-
-        card_box_inches = (2.5, 3.5)  # passt zu Poker (Preprocess-Zielgröße) [1](https://vgroup-my.sharepoint.com/personal/raoul_schaupp_vector_com/Documents/Microsoft%20Copilot%20Chat%20Files/PnP_PDF_CreatorV3.py)
-
+    # --- GUTTERFOLD ---
+    if lk in ("gutterfold",):
+        
+        def _compute_header_h_for_logo(logo_path, page_w, page_h, margins, grid_top_y):
+                if not logo_path:
+                    return 0.0
+                lw, lh = fit_logo_with_constraints(logo_path, LOGO_MAX_W, LOGO_MAX_H)
+                max_header_h = max(0.0, page_h - margins["top"] - grid_top_y - LOGO_GAP_TO_GRID)
+                return min(lh, max_header_h)
+        
+        card_w, card_h = POKER_W_PT, POKER_H_PT
+        gf_extra = GF_FOLD_GUTTER_PT
+        # 2 Reihen fix; Spalten dynamisch:
+        # Logo nicht als harte Reserve; Kopfband nur über RESERVE_TOP_PT
+        top_res = RESERVE_TOP_PT
+        avail_w = page_w - MARGINS_PT["left"] - MARGINS_PT["right"]
+        avail_h = page_h - MARGINS_PT["top"] - MARGINS_PT["bottom"] - top_res - BOTTOM_RESERVED_PT
+        if avail_h < (2 * card_h + gf_extra):
+            raise ValueError(
+                t(
+                    "error_gutterfold_space",
+                    avail=avail_h,
+                    need=needed_h,
+                    margin=PRINT_SAFE_MARGIN_CM,
+                    top=top_res,
+                    bottom=BOTTOM_RESERVED_PT
+                )
+            )
+        cols = max(1, int(avail_w // card_w))
         grid_w = cols * card_w
-        grid_h = 2 * card_h + GF_FOLD_GUTTER_PT
-
-        x0, y0 = compute_grid_origin_centered(page_w, page_h, grid_w, grid_h)
+        grid_h = 2 * card_h + gf_extra
+        x0, y0 = compute_grid_origin_centered_with_margins(
+            page_w, page_h, grid_w, grid_h,
+            MARGINS_PT, top_res, BOTTOM_RESERVED_PT
+        )
         grid_top_y = y0 + grid_h
-
+        per_page = cols  # je Spalte ein Paar
         c = create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
+        _apply_logo = bool(logo_path)
         sheet_no = 0
-
         for group in chunk(pairs, per_page):
             sheet_no += 1
-
-            place_images_gutterfold_2x4(
-                c,
-                pairs_group=group,
-                x0=x0, y0=y0,
-                card_w=card_w, card_h=card_h,
-                cols=cols,
-                fold_gutter=GF_FOLD_GUTTER_PT,
+            place_images_gutterfold_grid(
+                c, group, x0, y0, card_w, card_h,
+                cols=cols, fold_gutter=GF_FOLD_GUTTER_PT,
                 quality_key=quality_key,
-                card_box_inches=card_box_inches,
+                card_box_inches=(POKER_W_PT/72.0, POKER_H_PT/72.0)
             )
-
-            if logo_path:
-                draw_logo_above_grid(c, logo_path, page_w, page_h, grid_top_y)
-
+            
+            if _apply_logo:
+                header_h = _compute_header_h_for_logo(logo_path, page_w, page_h, MARGINS_PT, grid_top_y)
+                if header_h > 1.0:
+                    draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
             draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}")
             c.showPage()
-
         c.save()
         return
 
     raise ValueError("Unknown layout_key")
+
+from reportlab.lib.pagesizes import landscape
+
+def choose_gutterfold_orientation(base_pagesize):
+    """Wählt die Orientierung (landscape/portrait), die 2 Reihen + Falzgürtel in Originalgröße erlaubt."""
+    def available_h(pagesize_tuple):
+        page_w, page_h = pagesize_tuple
+        return (page_h 
+                - MARGINS_PT["top"] - MARGINS_PT["bottom"] 
+                - RESERVE_TOP_PT - BOTTOM_RESERVED_PT)
+
+    needed_h = 2 * POKER_H_PT + GF_FOLD_GUTTER_PT  # Kartenhöhe stammt aus dem gewählten Format
+    ls = landscape(base_pagesize)
+    if available_h(ls) >= needed_h:
+        return ls  # Querformat passt
+    if available_h(base_pagesize) >= needed_h:
+        return base_pagesize  # Hochformat passt
+    # Falls beides nicht reicht, nimm die Variante mit mehr Höhe; generate_pdf wird trotzdem sauber aborten.
+    return ls if available_h(ls) >= available_h(base_pagesize) else base_pagesize
+
 
 # =========================================================
 # Main
@@ -1441,70 +1870,156 @@ def main():
     print(f'PnP_PDF_Creator {SCRIPT_VERSION} | PIL available: {Image is not None}')
     print("Free software – see LICENSE.txt (and header license notice).")
     print(" ")
-    layout_keys = prompt_layout()
-    size_modes = prompt_pagesize_mode()
-    folder = prompt_folder()
 
+    # --- Formatwahl ---
+    fmt = prompt_card_format()
+    apply_card_format(fmt)
+    print_selected_format_info(fmt)
+    
+    # --- Neue Layout-Auswahl (Standard/Bleed/Gutterfold/All) ---
+    layout_keys = prompt_layout_dynamic()
+
+
+    # --- Papierformate (A4 / Letter / Both) ---
+    size_modes = prompt_pagesize_mode()
+
+    # --- Kartenordner ---
+    folder = prompt_folder()
     pairs = find_card_pairs(folder)
+
     if not pairs:
         pause_before_exit(t("no_cards"))
         return
 
-    # Analyze card images (ignore logo files; only a/b card pairs are checked)
-    sizes, too_small, pairs_for_2x3, skipped_2x3 = analyze_card_images(pairs)
-    # If any card image is smaller than the inner size (750x1050), we do NOT abort anymore.
-    # Those images will be upscaled during preprocessing.
+    # =====================================================
+    # Shared Cardback Handling
+    # =====================================================
+    include_back_pages = True
+    missing_backs = [base for (base, a, b) in pairs if not (b and b.exists())]
+    has_any_back = len(missing_backs) < len(pairs)
+
+    if not has_any_back:
+        # Shared fallback
+        shared_back = find_named_image_in_folder(folder, CARDBACK_BASENAME)
+        if shared_back:
+            print(t('using_cardback', file=shared_back.name))
+            pairs = [(base, a, shared_back) for (base, a, _b) in pairs]
+            missing_backs = []
+            has_any_back = True
+        else:
+            include_back_pages = False
+            # Keine Rückseiten → kein Gutterfold möglich
+            if any(k.lower() == "gutterfold" for k in layout_keys):
+                layout_keys = [k for k in layout_keys if k.lower() != "gutterfold"]
+                print(t('skip_gutterfold_no_backs', name=CARDBACK_BASENAME))
+
+    # Teilweise fehlende Backs → Gutterfold entfernen
+    if missing_backs and any(k.lower() == "gutterfold" for k in layout_keys):
+        # fronts ohne backs anzeigen
+        missing_front_files = []
+        for (base, a, b) in pairs:
+            if not (b and b.exists()):
+                missing_front_files.append(a.name if (a and a.exists()) else str(base))
+        missing_sorted = sorted(missing_front_files, key=lambda s: s.lower())
+        if len(missing_sorted) > 30:
+            shown = ', '.join(missing_sorted[:30]) + f" ... (+{len(missing_sorted)-30})"
+        else:
+            shown = ', '.join(missing_sorted)
+
+        print(t('skip_gutterfold_missing_backs', missing=shown))
+        layout_keys = [k for k in layout_keys if k.lower() != "gutterfold"]
+
+    # =====================================================
+    # Bildanalyse (Größen, Bleed-tauglichkeit)
+    # =====================================================
+    sizes, too_small, too_small_bleed, pairs_for_2x3, skipped_2x3 = analyze_card_images(pairs)
+
+    # Hinweis: kleine Karten → skalieren
     if too_small:
         names = sorted({p.name for p in too_small})
-        files_str = ', '.join(names)
-        print(t('warn_too_small_upscale', minw=INNER_W_PX, minh=INNER_H_PX, count=len(names), files=files_str))
+        print(t('warn_too_small_upscale',
+                minw=INNER_W_PX, minh=INNER_H_PX,
+                count=len(names), files=', '.join(names)))
 
-    # 2x3 requires that ALL cards have BLEED size (>= 825x1125).
-    # For inner-only decks (750x1050) or mixed sizes, 2x3 must be skipped.
-    requested_2x3 = any(k.lower() == '2x3' for k in layout_keys)
-    if requested_2x3:
+    # Spezifisch: Wenn irgendwo Bleed-Mindestgröße unterschritten wird,
+    # sollen alle Bleed-Layouts (bleed, 2x3, 2x5) NICHT erzeugt werden.
+    requested_bleed_any = any(k.lower() in ("bleed", "2x3", "2x5") for k in layout_keys)
+    if requested_bleed_any and too_small_bleed:
+        names = sorted({p.name for p in too_small_bleed})
+        if len(names) > 30:
+            shown = ', '.join(names[:30]) + f" ... (+{len(names)-30})"
+        else:
+            shown = ', '.join(names)
+        # Entferne alle Bleed-Varianten
+        layout_keys = [k for k in layout_keys if k.lower() not in ("bleed", "2x3", "2x5")]
+        print(t("skip_bleed_due_to_small",
+                minw=BLEED_W_PX, minh=BLEED_H_PX,
+                count=len(names), files=shown))
+
+    # Prüfen, ob 2x3 oder 2x5 überhaupt möglich sind (Bleed nötig), falls Bleed nicht bereits global deaktiviert wurde
+    requested_2x3 = any(k.lower() == "2x3" for k in layout_keys)
+    requested_2x5 = any(k.lower() == "2x5" for k in layout_keys)
+
+    if requested_2x3 or requested_2x5:
         if not pairs_for_2x3 or len(pairs_for_2x3) != len(pairs):
-            layout_keys = [k for k in layout_keys if k.lower() != '2x3']
-            print(t('skip_2x3'))
+            if requested_2x3:
+                layout_keys = [k for k in layout_keys if k.lower() != "2x3"]
+                print(t('skip_2x3', minw=BLEED_W_PX, minh=BLEED_H_PX))
 
-    # If nothing left to generate (e.g. only 2x3 was selected), exit
+            if requested_2x5:
+                layout_keys = [k for k in layout_keys if k.lower() != "2x5"]
+                print(t('skip_2x5', minw=BLEED_W_PX, minh=BLEED_H_PX))
+
     if not layout_keys:
         pause_before_exit()
         return
 
+    # =====================================================
+    # Weitere Eingaben
+    # =====================================================
     logo_path = prompt_logo_path(folder)
     quality_key = prompt_quality()
-
     copyright_name = prompt_copyright_name()
     version_str = prompt_version()
-    
     out_base = prompt_output_base("cards")
+
     multi = len(size_modes) > 1
 
+    # =====================================================
+    # PDF-Erzeugung
+    # =====================================================
     for layout_key in layout_keys:
-        # Use only bleed-capable pairs for 2x3 when images are mixed
-        pairs_layout = pairs
+        # Paare je nach Modus (Bleed braucht Bleed-taugliche Paare)
+        if layout_key in ("bleed", "2x3", "2x5"):
+            pairs_layout = pairs_for_2x3
+        else:
+            pairs_layout = pairs
         for base_pagesize, suffix in size_modes:
-            
-            # Für 2x3 UND gutterfold: Landscape
-            if layout_key in ("2x3", "gutterfold"):
+            # Orientierung je Layout
+            if layout_key in ("gutterfold",):
+                pagesize_tuple = choose_gutterfold_orientation(base_pagesize)
+            elif layout_key in ("bleed", "2x3", "2x5"):
                 pagesize_tuple = landscape(base_pagesize)
             else:
                 pagesize_tuple = base_pagesize
-
-            # Layout-Suffix für Dateiname
-            layout_suffix = "_3x3" if layout_key == "3x3" else "_2x3" if layout_key == "2x3" else "_gutterfold"
-            # Dateiname mit Layout + Papierformat (wenn BOTH)
-            out_path = Path(f"{out_base}{layout_suffix}{suffix}.pdf" if multi else f"{out_base}{layout_suffix}.pdf").resolve()
- 
+                
+            # Dateiname (Suffix)
+            if layout_key in ("standard", "3x3", "3x4"):
+                layout_suffix = "_standard"
+            elif layout_key in ("bleed", "2x3", "2x5"):
+                layout_suffix = "_bleed"
+            else:
+                layout_suffix = "_gutterfold"
+            out_path = (Path(f"{out_base}{layout_suffix}{suffix}.pdf").resolve()
+                        if multi else Path(f"{out_base}{layout_suffix}.pdf").resolve())
             generate_pdf(
-                 layout_key=layout_key,
-                 out_path=out_path,
-                 pagesize_tuple=pagesize_tuple,
-                 pairs=pairs_layout,
-                 logo_path=logo_path,
-                 copyright_name=copyright_name,
-                 version_str=version_str,
+                layout_key=layout_key,
+                out_path=out_path,
+                pagesize_tuple=pagesize_tuple,
+                pairs=pairs_layout,
+                logo_path=logo_path,
+                copyright_name=copyright_name,
+                version_str=version_str,
                 quality_key=quality_key
             )
             print(t("done", path=out_path))
