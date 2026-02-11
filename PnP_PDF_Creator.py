@@ -101,7 +101,7 @@ rprint = (console.print if console else None)
 # =========================================================
 # Script version / debug
 # =========================================================
-SCRIPT_VERSION = 'V1.2-2026-02-04'
+SCRIPT_VERSION = 'V1.2-2026-02-11'
 DEBUG_PREPROCESS = False  # set True to print per-image crop/resize diagnostics
 
 # =========================================================
