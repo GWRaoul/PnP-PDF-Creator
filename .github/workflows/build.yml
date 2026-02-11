@@ -1,4 +1,3 @@
-
 name: Mac .app bauen (Doppelklick)
 
 on:
@@ -21,8 +20,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # Sicherstellen, dass rich + questionary wirklich installiert sind
+          pip install rich questionary
 
-      # 1) PyInstaller Build (Console-Tool, onedir ist stabil und leicht zu bündeln)
+      # 1) PyInstaller Build (ONEDIR wird zuverlässig eingebettet)
       - name: Build mit PyInstaller
         run: |
           pyinstaller --clean --noconfirm \
@@ -31,31 +32,29 @@ jobs:
             --onedir \
             PnP_PDF_Creator.py
 
-      # 2) Wrapper-.app bauen, die Terminal öffnet und das Tool startet
-      - name: Wrapper .app erstellen (Doppelklick -> Terminal)
+      # 2) Wrapper-App erzeugen (macOS .app, die Terminal öffnet)
+      - name: Wrapper .app erstellen (Doppelklick → Terminal)
         run: |
           set -e
 
-          # Debug: Was ist in dist?
           echo "== dist Inhalt =="
           ls -la dist
 
-          # PyInstaller onedir Output: dist/"PnP PDF Creator"/"PnP PDF Creator"
+          # Sicherstellen, dass PyInstaller-Ausgabe korrekt ist
           if [ ! -d "dist/PnP PDF Creator" ]; then
-            echo "❌ Erwarteter Ordner dist/PnP PDF Creator fehlt."
+            echo "❌ dist/PnP PDF Creator fehlt."
             exit 1
           fi
 
           if [ ! -f "dist/PnP PDF Creator/PnP PDF Creator" ]; then
-            echo "❌ Erwartete Datei dist/PnP PDF Creator/PnP PDF Creator fehlt."
-            echo "Ordnerinhalt:"
+            echo "❌ Binary fehlt."
             ls -la "dist/PnP PDF Creator"
             exit 1
           fi
 
           chmod +x "dist/PnP PDF Creator/PnP PDF Creator"
 
-          # AppleScript, das Terminal öffnet und das Programm startet
+          # AppleScript: Terminal öffnen & Programm starten
           cat > launcher.applescript <<'APPLESCRIPT'
           on run
               set appName to "PnP PDF Creator"
@@ -70,41 +69,38 @@ jobs:
           end run
           APPLESCRIPT
 
-          # .app erzeugen
+          # .app aus dem AppleScript erzeugen
           osacompile -o "PnP PDF Creator.app" launcher.applescript
 
-          # Icon in die Wrapper-App kopieren (Finder-Icon)
+          # Icon kopieren
           mkdir -p "PnP PDF Creator.app/Contents/Resources"
           cp "PnP_PDF_Creator.icns" "PnP PDF Creator.app/Contents/Resources/applet.icns"
 
-          # PyInstaller-Build in die Wrapper-App einbetten
+          # PyInstaller-Output in .app einbetten
           mkdir -p "PnP PDF Creator.app/Contents/Resources/tool"
           cp -R "dist/PnP PDF Creator/." "PnP PDF Creator.app/Contents/Resources/tool/"
 
-          # Optional: Minimal Info.plist Eintrag (Name)
-          /usr/libexec/PlistBuddy -c "Set :CFBundleName PnP\ PDF\ Creator" "PnP PDF Creator.app/Contents/Info.plist" || true
-          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName PnP\ PDF\ Creator" "PnP PDF Creator.app/Contents/Info.plist" || true
+          # Minimaler Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName 'PnP PDF Creator'" "PnP PDF Creator.app/Contents/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 'PnP PDF Creator'" "PnP PDF Creator.app/Contents/Info.plist" || true
 
           echo "✅ Wrapper-App erstellt:"
           ls -la "PnP PDF Creator.app"
 
-      - name: Wrapper-App ad-hoc signieren (gegen "beschädigt")
+      # 3) Ad-hoc signieren (macOS sonst „beschädigt“ Warnung)
+      - name: Wrapper-App ad-hoc signieren
         run: |
-          # Bundle inkl. "nested" Inhalte signieren (Frameworks, Helper usw.)
           codesign --force --deep --sign - "PnP PDF Creator.app"
-
-          # Optionaler Check (zeigt Signaturinfos im Log)
           codesign -dv --verbose=2 "PnP PDF Creator.app" || true
 
-      # 3) Als ZIP verpacken (wichtig für macOS-Ressourcen)
+      # 4) ZIP erzeugen für Release / Download
       - name: Wrapper-App verpacken
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
             "PnP PDF Creator.app" \
             "PnP_PDF_Creator_macOS_APP.zip"
 
-      # 4) ZIP als Artefakt hochladen
-      - name: Ergebnis hochladen
+      - name: Artefakt hochladen
         uses: actions/upload-artifact@v4
         with:
           name: PnP_PDF_Creator_macOS_APP
