@@ -715,6 +715,7 @@ I18N = {
         "rulebook_will_prepend": "Gefundene Rulebook-Seiten werden vorne in das PDF eingefügt.",
         "logo_found": "Logo gefunden: {file}",
         "logo_not_found": "Kein Logo gefunden (gesucht nach '{name}'). Es wird ohne Logo fortgefahren.",
+        "count_mismatch_warn": "Abweichende Anzahl bei '{base}': face={face} back={back} -> verwende face={use}",
     },
     "en": {
         "choose_layout": "Choose layout ({opts}) [All]: ",
@@ -758,6 +759,7 @@ I18N = {
         "rulebook_will_prepend": "The found rulebook pages will be prepended to the PDF.",
         "logo_found": "Logo found: {file}",
         "logo_not_found": "No logo found (looked for '{name}'). Continuing without logo.",
+        "count_mismatch_warn": "Mismatched count for '{base}': face={face} back={back} -> using face={use}",
     },
     "fr": {
         "choose_layout": "Choisissez un layout ({opts}) [All] : ",
@@ -801,6 +803,7 @@ I18N = {
         "rulebook_will_prepend": "Les pages de livret trouvées seront ajoutées au début du PDF.",
         "logo_found": "Logo trouvé : {file}",
         "logo_not_found": "Aucun logo trouvé (recherché '{name}'). Suite sans logo.",
+        "count_mismatch_warn": "Quantité différente pour '{base}' : face={face} back={back} -> utilisation de face={use}",
     },
     "es": {
         "choose_layout": "Elija un layout ({opts}) [All]: ",
@@ -844,6 +847,7 @@ I18N = {
         "rulebook_will_prepend": "Las páginas del reglamento se añadirán al inicio del PDF.",
         "logo_found": "Logo encontrado: {file}",
         "logo_not_found": "No se encontró logo (buscado '{name}'). Se continúa sin logo.",
+        "count_mismatch_warn": "Cantidad distinta para '{base}': face={face} back={back} -> se usa face={use}",
     },
     "it": {
         "choose_layout": "Scegli un layout ({opts}) [All]: ",
@@ -887,6 +891,7 @@ I18N = {
         "rulebook_will_prepend": "Le pagine del rulebook verranno inserite all'inizio del PDF.",
         "logo_found": "Logo trovato: {file}",
         "logo_not_found": "Nessun logo trovato (cercato '{name}'). Si procede senza logo.",
+        "count_mismatch_warn": "Quantità diversa per '{base}': face={face} back={back} -> uso face={use}",
     },
 }
 
@@ -1476,73 +1481,125 @@ def prompt_output_base(default_base: str) -> str:
 # Card pairing
 # =========================================================
 def find_card_pairs(folder: Path) -> List[Tuple[str, Optional[Path], Optional[Path]]]:
-    """Find and pair card front/back images.
-
-    Supported naming schemes (case-insensitive):
-
-    1) Legacy suffix scheme:
-       - Front ends with 'a'  (e.g. card01a.png)
-       - Back  ends with 'b'  (e.g. card01b.png)
-
-    2) Bracket scheme:
-       - Front contains '[face,<n>]' at the END of the filename stem
-       - Back  contains '[back,<n>]' at the END of the filename stem
-       where <n> can be 1-3 digits (e.g. [face,1], [face,001], [back,123]).
-
-    Pairing key is the base name + the bracket number (if present).
+    """
+    Find and pair card front/back images – with count support.
+    Erweiterungen:
+    - Bracket-Schema: base[face,NNN].png / base[back,NNN].png
+      -> NNN ist die gewünschte Stückzahl (1..3 Ziffern).
+      -> Face/Back-Counts unterschiedlich: Warnung via I18N; Face-Count gewinnt.
+      -> Nur Face vorhanden: wird 'count' mal ohne Back aufgenommen.
+    - Legacy '...a'/'...b': Count = 1 (wie bisher).
+    Rückgabe ist eine expandierte Liste, in der jedes Tupel eine physische Karte repräsentiert.
     """
     files = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_EXT]
 
-    # scheme 1: ...a / ...b
+    # Patterns
+    # Legacy: ...a / ...b
     ab_pattern = re.compile(r"^(.*)([ab])$", re.IGNORECASE)
-    # scheme 2: ...[face,001] / ...[back,001]
-    bracket_pattern = re.compile(r"^(.*)\[(face|back),(\d{1,3})\]$", re.IGNORECASE)
 
-    # key -> {'a': Path, 'b': Path, 'base': str, 'num': Optional[str]}
-    pairs: Dict[str, Dict[str, object]] = {}
+    # New scheme: base[face,NNN] OR base[back,NNN]
+    # Wichtig: base = alles VOR der ersten Klammer!
+    bracket_pattern = re.compile(r"^(.*?)\[(face|back),(\d{1,3})\]$", re.IGNORECASE)
+
+    # Map: base -> entry
+    # Wichtig: NUM wird nicht mehr zum Key!
+    pairs_map: Dict[str, Dict[str, object]] = {}
 
     for f in files:
         stem = f.stem
+
         m2 = bracket_pattern.match(stem)
         if m2:
-            base = m2.group(1)
-            kind = m2.group(2).lower()  # face/back
-            num = m2.group(3)
-            num_norm = num.zfill(3)  # normalize for sorting/pairing
-            side = 'a' if kind == 'face' else 'b'
-            key = f"{base}__{num_norm}"
-            entry = pairs.setdefault(key, {'base': base, 'num': num_norm})
-            entry[side] = f
+            base = m2.group(1)                 # nur VOR der Klammer
+            kind = m2.group(2).lower()         # face/back
+            num_raw = m2.group(3)              # NNN (1–3 digits)
+            count_val = max(1, min(int(num_raw), 999))
+
+            key = base.lower()                 # KEY = NUR DER BASENAME
+
+            entry = pairs_map.setdefault(key, {
+                'base': base,
+                'num': None,
+                'face': None,
+                'back': None,
+                'face_count': None,
+                'back_count': None,
+            })
+            if kind == 'face':
+                entry['face'] = f
+                entry['face_count'] = count_val
+            else:
+                entry['back'] = f
+                entry['back_count'] = count_val
             continue
 
-        m1 = ab_pattern.match(stem)
-        if m1:
-            base = m1.group(1)
-            side = m1.group(2).lower()
-            key = base  # legacy key
-            entry = pairs.setdefault(key, {'base': base, 'num': None})
-            entry[side] = f
+    # Legacy-Schema separat, damit "base__NNN" Keys nicht mit "base" kollidieren
+    for f in files:
+        m1 = ab_pattern.match(f.stem)
+        if not m1:
+            continue
+        base = m1.group(1)
+        side = m1.group(2).lower()
+        key = base.lower()
+        entry = pairs_map.setdefault(key, {
+            'base': base,
+            'num': None,
+            'face': None,
+            'back': None,
+            'face_count': None,
+            'back_count': None,
+        })
+        if side == 'a':
+            entry['face'] = f
+            entry['face_count'] = 1
+        else:
+            entry['back'] = f
+            entry['back_count'] = 1
 
-    # Build sorted result
-    def sort_key(item: Tuple[str, Dict[str, object]]):
-        _key, d = item
-        base = str(d.get('base', '')).lower()
-        num = d.get('num')
-        if num is None:
-            return (base, -1)
-        try:
-            return (base, int(str(num)))
-        except Exception:
-            return (base, 0)
+    # Sortierung: base (case-insensitiv)
+    def sort_key(item):
+        return item[1]["base"].lower()
 
-    result: List[Tuple[str, Optional[Path], Optional[Path]]] = []
-    for _key, d in sorted(pairs.items(), key=sort_key):
+    expanded: List[Tuple[str, Optional[Path], Optional[Path]]] = []
+
+    for _key, d in sorted(pairs_map.items(), key=sort_key):
         base = str(d.get('base', ''))
         num = d.get('num')
-        base_display = f"{base}[{num}]" if num else base
-        result.append((base_display, d.get('a'), d.get('b')))
+        face: Optional[Path] = d.get('face')  # type: ignore
+        back: Optional[Path] = d.get('back')  # type: ignore
+        face_count = d.get('face_count') if isinstance(d.get('face_count'), int) else None
+        back_count = d.get('back_count') if isinstance(d.get('back_count'), int) else None
 
-    return result
+        # Defaults
+        if face and not face_count:
+            face_count = 1
+        if back and not back_count:
+            back_count = 1
+
+        # Count-Regeln
+        if face and back:
+            if face_count and back_count and face_count != back_count:
+                use_count = face_count or 1
+                # Lokalisierte Warnung
+                print(t("count_mismatch_warn", base=base, face=face_count, back=back_count, use=use_count))
+                count_to_use = use_count
+            else:
+                count_to_use = face_count or back_count or 1
+        elif face and not back:
+            count_to_use = face_count or 1
+        elif back and not face:
+            count_to_use = back_count or 1
+        else:
+            continue  # weder Face noch Back
+
+        # Display name ohne NNN
+        display_name = base
+        count_to_use = max(1, int(count_to_use))
+        for _ in range(count_to_use):
+            expanded.append((display_name,
+                             face if (face and face.exists()) else face,
+                             back  if (back  and back.exists())  else back))
+    return expanded
 
 def find_named_image_in_folder(folder: Path, basename: str) -> Optional[Path]:
     """Find an image file in folder with stem matching basename (Windows-typical: case-insensitive).
