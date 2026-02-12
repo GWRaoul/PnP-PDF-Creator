@@ -101,7 +101,7 @@ rprint = (console.print if console else None)
 # =========================================================
 # Script version / debug
 # =========================================================
-SCRIPT_VERSION = 'V1.2-2026-02-11'
+SCRIPT_VERSION = 'V1.2-2026-02-12'
 DEBUG_PREPROCESS = False  # set True to print per-image crop/resize diagnostics
 
 # =========================================================
@@ -124,6 +124,10 @@ DEFAULT_CARDBACK_BASENAME = 'cardback'
 CARDBACK_BASENAME = DEFAULT_CARDBACK_BASENAME
 DEFAULT_LOGO_BASENAME = 'logo'
 LOGO_BASENAME = DEFAULT_LOGO_BASENAME
+DEFAULT_RULEBOOK_BASENAME = 'rulebook'
+RULEBOOK_BASENAME = DEFAULT_RULEBOOK_BASENAME
+DEFAULT_RULEBOOK_ROTATE_MODE = 'auto'  # auto|off|force_landscape|force_portrait
+RULEBOOK_ROTATE_MODE = DEFAULT_RULEBOOK_ROTATE_MODE
 
 # Card format templates (fixed template DPI; bleed is 1/8" per side)
 TEMPLATE_DPI = 300
@@ -258,7 +262,7 @@ COPY_MAX_CHARS = 150
 
 # 3x3 + Gutterfold cut marks (standard)
 # These are overridable via INI (section [cutmarks]).
-CUTMARK_LEN_PT_STD = 10.0
+CUTMARK_LEN_PT_STD = 5.0
 CUTMARK_LINE_PT_STD = 1.0
 
 # 2x3 marks (outer only, cut to poker area inside bleed image)
@@ -549,18 +553,32 @@ def ensure_assets_defaults(cp: configparser.ConfigParser) -> bool:
     if not cp.has_option('assets', 'logo_name'):
         cp.set('assets', 'logo_name', DEFAULT_LOGO_BASENAME)
         changed = True
+    if not cp.has_option('assets', 'rulebook_name'):
+        cp.set('assets', 'rulebook_name', DEFAULT_RULEBOOK_BASENAME)
+        changed = True
+    if not cp.has_option('assets', 'rulebook_rotate'):
+        cp.set('assets', 'rulebook_rotate', DEFAULT_RULEBOOK_ROTATE_MODE)
+        changed = True
     return changed
 
 def load_assets_from_config(cp: configparser.ConfigParser) -> None:
     # Load asset settings from INI into global variables.
-    global CARDBACK_BASENAME, LOGO_BASENAME
+    global CARDBACK_BASENAME, LOGO_BASENAME, RULEBOOK_BASENAME, RULEBOOK_ROTATE_MODE
     # cardback
     name = cp.get('assets', 'cardback_name', fallback=DEFAULT_CARDBACK_BASENAME).strip()
     CARDBACK_BASENAME = name if name else DEFAULT_CARDBACK_BASENAME
     # logo
     logo_name = cp.get('assets', 'logo_name', fallback=DEFAULT_LOGO_BASENAME).strip()
     LOGO_BASENAME = logo_name if logo_name else DEFAULT_LOGO_BASENAME
-   
+    # rulebook
+    rulebook_name = cp.get('assets', 'rulebook_name', fallback=DEFAULT_RULEBOOK_BASENAME).strip()
+    RULEBOOK_BASENAME = rulebook_name if rulebook_name else DEFAULT_RULEBOOK_BASENAME
+    # rulebook rotate mode
+    rotate_mode = cp.get('assets', 'rulebook_rotate', fallback=DEFAULT_RULEBOOK_ROTATE_MODE).strip().lower()
+    if rotate_mode not in ('auto', 'off', 'force_landscape', 'force_portrait'):
+        rotate_mode = DEFAULT_RULEBOOK_ROTATE_MODE
+    RULEBOOK_ROTATE_MODE = rotate_mode    
+
 def load_cutmarks_from_config(cp: configparser.ConfigParser) -> None:
     # Load cutmark settings from INI into the global variables.
     global CUTMARK_LEN_PT_STD, CUTMARK_LINE_PT_STD, CUTMARK_LEN_PT_BLEED, CUTMARK_LINE_PT_BLEED, CUTMARK_COLOR, OUTER_BLEED_KEEP_PX
@@ -692,6 +710,11 @@ I18N = {
             "benötigt {need:.1f} pt (Rand: {margin} cm; Kopf-Reserve: {top:.1f} pt; "
         "Fuß-Reserve: {bottom:.1f} pt)."
         ),
+        "rulebook_found": "Rulebook-Seiten gefunden: {files}",
+        "rulebook_not_found": "Keine Rulebook-Seiten gefunden (Suche nach '{name}*').",
+        "rulebook_will_prepend": "Gefundene Rulebook-Seiten werden vorne in das PDF eingefügt.",
+        "logo_found": "Logo gefunden: {file}",
+        "logo_not_found": "Kein Logo gefunden (gesucht nach '{name}'). Es wird ohne Logo fortgefahren.",
     },
     "en": {
         "choose_layout": "Choose layout ({opts}) [All]: ",
@@ -730,6 +753,11 @@ I18N = {
             "required {need:.1f} pt (margin: {margin} cm; top reserve: {top:.1f} pt; "
             "bottom reserve: {bottom:.1f} pt)."
         ),
+        "rulebook_found": "Rulebook pages found: {files}",
+        "rulebook_not_found": "No rulebook pages found (looked for '{name}*').",
+        "rulebook_will_prepend": "The found rulebook pages will be prepended to the PDF.",
+        "logo_found": "Logo found: {file}",
+        "logo_not_found": "No logo found (looked for '{name}'). Continuing without logo.",
     },
     "fr": {
         "choose_layout": "Choisissez un layout ({opts}) [All] : ",
@@ -768,6 +796,11 @@ I18N = {
             "il en faut {need:.1f} pt (marge : {margin} cm ; réserve supérieure : {top:.1f} pt ; "
             "réserve inférieure : {bottom:.1f} pt)."
         ),
+        "rulebook_found": "Pages de livret de règles trouvées : {files}",
+        "rulebook_not_found": "Aucune page de livret trouvée (recherche sur '{name}*').",
+        "rulebook_will_prepend": "Les pages de livret trouvées seront ajoutées au début du PDF.",
+        "logo_found": "Logo trouvé : {file}",
+        "logo_not_found": "Aucun logo trouvé (recherché '{name}'). Suite sans logo.",
     },
     "es": {
         "choose_layout": "Elija un layout ({opts}) [All]: ",
@@ -806,6 +839,11 @@ I18N = {
             "se requieren {need:.1f} pt (margen: {margin} cm; reserva superior: {top:.1f} pt; "
             "reserva inferior: {bottom:.1f} pt)."
         ),
+        "rulebook_found": "Páginas del reglamento encontradas: {files}",
+        "rulebook_not_found": "No se encontraron páginas del reglamento (buscado '{name}*').",
+        "rulebook_will_prepend": "Las páginas del reglamento se añadirán al inicio del PDF.",
+        "logo_found": "Logo encontrado: {file}",
+        "logo_not_found": "No se encontró logo (buscado '{name}'). Se continúa sin logo.",
     },
     "it": {
         "choose_layout": "Scegli un layout ({opts}) [All]: ",
@@ -844,6 +882,11 @@ I18N = {
             "necessari {need:.1f} pt (margine: {margin} cm; riserva superiore: {top:.1f} pt; "
             "riserva inferiore: {bottom:.1f} pt)."
         ),
+        "rulebook_found": "Pagine del rulebook trovate: {files}",
+        "rulebook_not_found": "Nessuna pagina del rulebook trovata (cercato '{name}*').",
+        "rulebook_will_prepend": "Le pagine del rulebook verranno inserite all'inizio del PDF.",
+        "logo_found": "Logo trovato: {file}",
+        "logo_not_found": "Nessun logo trovato (cercato '{name}'). Si procede senza logo.",
     },
 }
 
@@ -1247,6 +1290,22 @@ def analyze_card_images(pairs: List[Tuple[str, Optional[Path], Optional[Path]]])
 # =========================================================
 # Prompts
 # =========================================================
+
+def _q_select(title: str, choices, default):
+    """
+    Robuster Wrapper für questionary.select(...).ask():
+    - fängt Exceptions (TTY/Windows/Abbruch) ab
+    - liefert bei None/leerem String immer den Default zurück
+    - 'choices' und 'default' können Strings oder questionary.Choice sein
+    """
+    if questionary is None:
+        return default
+    try:
+        picked = questionary.select(title, choices=choices, default=default).ask()
+    except Exception:
+        picked = None
+    return picked if picked else default
+
 def prompt_layout_dynamic(args=None) -> List[str]:
     # 1) CLI-Override
     if args and getattr(args, "layout", None):
@@ -1263,18 +1322,19 @@ def prompt_layout_dynamic(args=None) -> List[str]:
     # 2) Komfort: List-Prompt (falls questionary vorhanden)
     if questionary is not None:
         # Titel lokalisiert; Choices bleiben sprachneutral, da die Logik auf diese Keys mappt
-        q_title = t("choose_layout", opts="Standard/Bleed/Gutterfold/All")
-        picked = questionary.select(
-            q_title,
-            choices=["All", "Standard", "Bleed", "Gutterfold"],
-            default="All"
-        ).ask()
-        return {
+        q_title = t("choose_layout", opts="Standard/Bleed/Gutterfold/All")   
+        picked = _q_select(q_title, choices=["All", "Standard", "Bleed", "Gutterfold"], default="All")
+        mapping = {
             "all": ["standard","bleed","gutterfold"],
             "standard": ["standard"],
             "bleed": ["bleed"],
-           "gutterfold": ["gutterfold"],
-        }[picked.lower()]
+            "gutterfold": ["gutterfold"],
+        }
+        try:
+            key = picked.strip().lower() if isinstance(picked, str) else "all"
+        except Exception:
+            key = "all"
+        return mapping.get(key, mapping["all"])        
     # 3) Fallback: bisherige Freitext-Eingabe
     opts_str = "Standard/Bleed/Gutterfold/All"
     while True:
@@ -1303,10 +1363,10 @@ def prompt_pagesize_mode(args=None):
     # 2) Komfort: List-Prompt (falls questionary vorhanden)
     if questionary is not None:
         q_title = t("choose_format")
-        picked = questionary.select(q_title, choices=["Both","A4","Letter"], default="Both").ask()
-        if picked == "A4":
+        picked = _q_select(q_title, choices=["Both","A4","Letter"], default="Both")
+        if str(picked) == "A4":
             return [(A4, "_A4")]
-        if picked == "Letter":
+        if str(picked) == "Letter":
             return [(letter, "_Letter")]
         return [(A4,"_A4"), (letter,"_Letter")]
     # 3) Fallback: bisherige Freitext-Eingabe
@@ -1372,11 +1432,14 @@ def prompt_quality(args=None) -> str:
             questionary.Choice("Medium",   "medium"),
             questionary.Choice("Low",      "low"),
         ]
-        picked = questionary.select(
-            q_title,
-            choices=choices,
-            default=choices[1]  # "High" – exakt das Objekt aus der Liste
-        ).ask()
+        try:
+            picked = questionary.select(
+                q_title,
+                choices=choices,
+                default=choices[1]  # "High" – exakt das Objekt aus der Liste
+            ).ask()
+        except Exception:
+            picked = None
         # Frage abgebrochen? -> Fallback auf DEFAULT_QUALITY
         return picked or DEFAULT_QUALITY
     # 3) Fallback: Freitext-Prompt (lokalisiert)
@@ -1499,6 +1562,23 @@ def find_named_image_in_folder(folder: Path, basename: str) -> Optional[Path]:
     candidates.sort(key=lambda p: (ext_rank.get(p.suffix.lower(), 9), p.name.lower()))
     return candidates[0]
 
+def find_rulebook_images(folder: Path, basename: str) -> List[Path]:
+    """
+    Sucht nach Bildern (png/jpg/jpeg), deren Dateiname (stem) mit `basename` beginnt,
+    z. B. rulebook01.png, rulebook02.jpg. Alphanumerische Sortierung.
+    """
+    if not basename:
+        return []
+    want = basename.strip().lower()
+    files = [
+        p for p in folder.iterdir()
+        if p.is_file() and p.suffix.lower() in SUPPORTED_EXT and p.stem.lower().startswith(want)
+    ]
+    def _alnum_key(p: Path):
+        import re
+        parts = re.split(r'(\d+)', p.name.lower())
+        return [int(s) if s.isdigit() else s for s in parts]
+    return sorted(files, key=_alnum_key)
 
 def chunk(lst, n):
     for i in range(0, len(lst), n):
@@ -1530,6 +1610,108 @@ def fit_logo_with_constraints(logo_path: Path, max_w: float, max_h: float) -> Tu
 
 def compute_grid_origin_centered(page_w: float, page_h: float, grid_w: float, grid_h: float) -> Tuple[float, float]:
     return (page_w - grid_w) / 2.0, (page_h - grid_h) / 2.0
+
+# ---------------------------------------------------------
+# Rulebook-Seiten (Frontmatter) einfügen
+# ---------------------------------------------------------
+def draw_rulebook_pages(c: canvas.Canvas, pagesize_tuple, image_paths: List[Path], mode: str = "auto", force_mode: str = "auto") -> None:
+    """
+    Fügt die angegebenen Bildseiten VORNE ein:
+    - jeweils ganze Seite A4/Letter (entsprechend pagesize_tuple)
+    - Bild zentriert
+    - nur herunterskalieren, NIE hochskalieren
+    - KEIN Logo, KEINE Fußzeile/Version/Seitenzahl
+    - mode: "portrait_pref" (Standard), "landscape_pref" (Bleed/Gutterfold), "auto"
+    - force_mode: "auto" (Standardverhalten), "off", "force_landscape", "force_portrait"
+    """
+    if not image_paths:
+        return
+    page_w, page_h = pagesize_tuple
+    for p in image_paths:
+        try:
+            if not p.exists():
+                continue
+            # --- Per-Image Rotation abhängig vom Ziel-Layout ---
+            # Regeln:
+            #   - landscape_pref (Bleed/Gutterfold): rotate 90° rechts, wenn Höhe > Breite
+            #   - portrait_pref  (Standard)        : rotate 90° rechts, wenn Breite > Höhe
+            #   - quadratisch: keine Rotation
+            rotated_reader = None
+            iw = ih = None
+            size = get_image_px_size(p)
+            if size:
+                iw, ih = float(size[0]), float(size[1])
+            # Default: keine Rotation, direkter Reader
+            img_reader = ImageReader(str(p))
+
+            def _need_rotate_clockwise(iw_f: float, ih_f: float, mode_s: str) -> bool:
+                if iw_f is None or ih_f is None:
+                    return False
+                if abs(iw_f - ih_f) < 1e-6:
+                    return False  # quadratisch
+                if mode_s == "landscape_pref":
+                    return ih_f > iw_f
+                if mode_s == "portrait_pref":
+                    return iw_f > ih_f
+                return False
+
+            # force_mode greift zuerst
+            fmode = (force_mode or "auto").lower()
+            if fmode == "off":
+                target_mode = "none"  # niemals rotieren
+            elif fmode == "force_landscape":
+                target_mode = "landscape_pref"
+            elif fmode == "force_portrait":
+                target_mode = "portrait_pref"
+            else:
+                # "auto" -> aus dem Layout-Mode ableiten
+                target_mode = (mode or "auto").lower()
+                if target_mode not in ("portrait_pref", "landscape_pref"):
+                    target_mode = "portrait_pref"
+
+            if Image is not None and iw is not None and ih is not None and target_mode != "none" and _need_rotate_clockwise(iw, ih, target_mode):
+                # 90° rechts drehen (clockwise) -> PIL transpose ROTATE_270
+                from PIL import Image as _PILImage
+                with _PILImage.open(p) as _im:
+                    _im = _im.convert("RGBA")
+                    _im = _im.transpose(_PILImage.ROTATE_270)  # 90° clockwise
+                    iw, ih = float(_im.width), float(_im.height)
+                    rotated_reader = ImageReader(_im)
+            # -------------------------------------------------------
+            #   Skalierung: NICHT hochskalieren
+            #   Nur verkleinern, wenn Bild > Seite (physisch @300dpi)
+            # -------------------------------------------------------
+            if iw is None or ih is None or iw <= 0 or ih <= 0:
+                draw_w_pt = page_w
+                draw_h_pt = page_h
+            else:
+                # Bildgröße in Punkten (1 pt = 1/72", Bild hat nativen 300 dpi)
+                iw_pt = iw / 300.0 * 72.0
+                ih_pt = ih / 300.0 * 72.0
+    
+                # Downscale-Faktor (niemals >1)
+                scale = min(1.0, min(page_w / iw_pt, page_h / ih_pt))
+
+                draw_w_pt = iw_pt * scale
+                draw_h_pt = ih_pt * scale
+
+            # Zentrierung
+            dx = (page_w - draw_w_pt) / 2.0
+            dy = (page_h - draw_h_pt) / 2.0
+
+            c.drawImage(
+                rotated_reader or img_reader,
+                dx, dy,
+                width=draw_w_pt,
+                height=draw_h_pt,
+                preserveAspectRatio=True,
+                mask="auto"
+            )
+
+            c.showPage()
+        except Exception:
+            # robust weiter; fehlerhafte Datei überspringen
+            continue
 
 # =========================================================
 # CLI / Rich / Komfort: Argumente, hübsche Ausgabe, Warm-Up
@@ -2459,7 +2641,8 @@ def generate_pdf(layout_key: str,
                  version_str: str,
                  quality_key: str,
                  include_back_pages: bool = True,
-                 outer_bleed_keep_px: int = 0):
+                 outer_bleed_keep_px: int = 0,
+                 rulebook_images: Optional[List[Path]] = None):
     """
     Dynamische Layout-Erzeugung:
       - 'standard' (Innenbilder, ohne Bleed, mit inneren Kreuzen + Außenmarken)
@@ -2492,6 +2675,7 @@ def generate_pdf(layout_key: str,
         
         per_page = cols * rows
         c = create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
+        draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode="portrait_pref", force_mode=RULEBOOK_ROTATE_MODE)
         # Optionaler Spezialfall: Letter + Standard (früher 3x3 tiefer)
         bottom_y_override = BOTTOM_Y_LETTER_3X3 if pagesize_tuple == letter else None
         
@@ -2554,6 +2738,7 @@ def generate_pdf(layout_key: str,
         )
         per_page = cols * rows
         c = create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
+        draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode="landscape_pref", force_mode=RULEBOOK_ROTATE_MODE)
         sheet_no = 0
         for group in chunk(pairs, per_page):
             sheet_no += 1
@@ -2627,6 +2812,7 @@ def generate_pdf(layout_key: str,
         grid_top_y = y0 + grid_h
         per_page = cols  # je Spalte ein Paar
         c = create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
+        draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode="landscape_pref", force_mode=RULEBOOK_ROTATE_MODE)
         _apply_logo = bool(logo_path)
         sheet_no = 0
         for group in chunk(pairs, per_page):
@@ -2711,9 +2897,11 @@ def main():
                 f"{f['name']} ({_choice_mm_pair(f)} mm)"
                 for f in CARD_FORMATS
             ]    
-            
-            picked = questionary.select(q_title, choices=choices, default=choices[0]).ask()
-            idx = choices.index(picked)
+            picked = _q_select(q_title, choices=choices, default=choices[0])
+            try:
+                idx = choices.index(picked)
+            except Exception:
+                idx = 0
             return CARD_FORMATS[idx]
         # 3) Fallback: bestehende Funktion (dein alter Prompt)
         return prompt_card_format()
@@ -2828,13 +3016,27 @@ def main():
         pause_before_exit()
         return
 
-    # -----------------------------
-    # 6) Weitere Eingaben (Qualität/Copyright/Version/Ausgabename) + Logo-Autofind
-    # ----------------------------------------------------------------------------
-    # Logo NICHT mehr abfragen: nur prüfen, ob im Kartenordner eine Datei mit dem
-    # in [assets].logo_name konfigurierten Stamm existiert (png/jpg/jpeg).
+    # 6) Rulebook/Logo früh ankündigen, dann weitere Eingaben
+    # -------------------------------------------------------
+    # Rulebook-Bilder finden & Nutzer informieren
+    rulebook_images = find_rulebook_images(folder, RULEBOOK_BASENAME)
+    if rulebook_images:
+        names_str = ", ".join(p.name for p in rulebook_images[:30]) + (f" ... (+{len(rulebook_images)-30})" if len(rulebook_images) > 30 else "")
+        print(t("rulebook_found", files=names_str))
+        print(t("rulebook_will_prepend"))
+    else:
+        print(t("rulebook_not_found", name=RULEBOOK_BASENAME))
+
+    # Logo automatisch suchen & Nutzer informieren
     logo_path = find_named_image_in_folder(folder, LOGO_BASENAME)
-    # Copyright / Version / Out-Basis
+    if logo_path:
+        print(t("logo_found", file=logo_path.name))
+    else:
+        print(t("logo_not_found", name=LOGO_BASENAME))
+
+    # 7) Weitere Eingaben (Qualität/Urheber/Version/Ausgabename)
+    # ----------------------------------------------------------
+    # (Logo bereits ermittelt; rulebook_images ebenfalls vorhanden)
     copyright_name = getattr(args, "copyright", None)
     if copyright_name is None:
         copyright_name = prompt_copyright_name()
@@ -2843,7 +3045,7 @@ def main():
     generation_dir = build_generation_dir(out_base)
     
     # -----------------------------
-    # 7) Warm-Up (optional, beschleunigt das spätere Zeichnen)
+    # 8) Warm-Up (optional, beschleunigt das spätere Zeichnen)
     # -----------------------------
     if "standard" in [k.lower() for k in layout_keys]:
         all_imgs_std = _collect_all_images_for("standard", pairs)
@@ -2854,7 +3056,7 @@ def main():
         warmup_preprocessing(all_imgs_bleed, quality_key, get_bleed_box_inches(), crop_bleed=False)
 
     # -----------------------------
-    # 8) PDF-Erzeugung (wie bisher)
+    # 9) PDF-Erzeugung (wie bisher)
     # -----------------------------
     all_have_bleed = (pairs_for_2x3 and len(pairs_for_2x3) == len(pairs))
 
@@ -2901,7 +3103,8 @@ def main():
                 copyright_name=copyright_name,
                 version_str=version_str,
                 quality_key=quality_key,
-                outer_bleed_keep_px=outer_keep
+                outer_bleed_keep_px=outer_keep,
+                rulebook_images=rulebook_images
             )
             print(t("done", path=out_path))
 
