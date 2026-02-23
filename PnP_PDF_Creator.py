@@ -21,7 +21,9 @@ This product includes third-party software components:
 - Python (Python Software Foundation License, PSF)
 - PyInstaller (GPLv2 with bootloader exception)
 - ReportLab (BSD-style license)
-- Pillow / PIL fork (HPND license)
+- Pillow (HPND license)
+- Questionary (MIT License)
+- Rich (MIT License)
 
 All third-party components are used in accordance with their respective licenses.
 Their original copyright notices remain with their respective authors.
@@ -44,6 +46,7 @@ import hashlib
 import sys
 import configparser
 import argparse
+import io
 from os.path import expanduser
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
@@ -85,12 +88,11 @@ except Exception:
 os.environ.setdefault("PROMPT_TOOLKIT_COLOR_DEPTH", "DEPTH_24_BIT")
 os.environ.setdefault("PROMPT_TOOLKIT_FORCE_TERMINAL", "1")
 
-# UTF-8 Ausgabe für Box-Zeichen etc. robust machen
 try:
-    if hasattr(sys.stdout, "detach"):
-        sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
-    if hasattr(sys.stderr, "detach"):
-        sys.stderr = codecs.getwriter("utf-8")(sys.stderr.detach())
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "buffer"):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 except Exception:
     pass
 
@@ -101,7 +103,7 @@ rprint = (console.print if console else None)
 # =========================================================
 # Script version / debug
 # =========================================================
-SCRIPT_VERSION = 'V1.2-2026-02-12'
+SCRIPT_VERSION = 'V1.3-2026-02-23'
 DEBUG_PREPROCESS = False  # set True to print per-image crop/resize diagnostics
 
 # =========================================================
@@ -716,6 +718,16 @@ I18N = {
         "logo_found": "Logo gefunden: {file}",
         "logo_not_found": "Kein Logo gefunden (gesucht nach '{name}'). Es wird ohne Logo fortgefahren.",
         "count_mismatch_warn": "Abweichende Anzahl bei '{base}': face={face} back={back} -> verwende face={use}",
+        "using_pdfconfig": "Verwende pdfConfig.txt aus:\n{path}\nAlle UI-Eingaben werden übersprungen.",
+        "config_title": "Konfiguration",
+        "cfg_format": "Kartenformat: {id} ({name})",
+        "cfg_layouts": "Layout(s): {layouts}",
+        "cfg_paper": "Papierformat: {paper}",
+        "cfg_quality": "Qualität: {quality}",
+        "cfg_bottom_text": "Fußzeilentext: {text}",
+        "cfg_version": "Version: {version}",
+        "cfg_output_name": "Dateiname: {name}",
+        "none": "— kein —",
     },
     "en": {
         "choose_layout": "Choose layout ({opts}) [All]: ",
@@ -760,6 +772,16 @@ I18N = {
         "logo_found": "Logo found: {file}",
         "logo_not_found": "No logo found (looked for '{name}'). Continuing without logo.",
         "count_mismatch_warn": "Mismatched count for '{base}': face={face} back={back} -> using face={use}",
+        "using_pdfconfig": "Using pdfConfig.txt from:\n{path}\nAll UI prompts will be skipped; values are taken from this file.",
+        "config_title": "Configuration",
+        "cfg_format": "Card format: {id} ({name})",
+        "cfg_layouts": "Layout(s): {layouts}",
+        "cfg_paper": "Paper: {paper}",
+        "cfg_quality": "Quality: {quality}",
+        "cfg_bottom_text": "Bottom text: {text}",
+        "cfg_version": "Version: {version}",
+        "cfg_output_name": "Output name: {name}",
+        "none": "— none —",
     },
     "fr": {
         "choose_layout": "Choisissez un layout ({opts}) [All] : ",
@@ -804,6 +826,16 @@ I18N = {
         "logo_found": "Logo trouvé : {file}",
         "logo_not_found": "Aucun logo trouvé (recherché '{name}'). Suite sans logo.",
         "count_mismatch_warn": "Quantité différente pour '{base}' : face={face} back={back} -> utilisation de face={use}",
+        "using_pdfconfig": "Utilisation de pdfConfig.txt depuis :\n{path}\nToutes les invites UI seront ignorées ; les valeurs proviennent de ce fichier.",
+        "config_title": "Configuration",
+        "cfg_format": "Format de carte : {id} ({name})",
+        "cfg_layouts": "Mise en page : {layouts}",
+        "cfg_paper": "Papier : {paper}",
+        "cfg_quality": "Qualité : {quality}",
+        "cfg_bottom_text": "Texte bas de page : {text}",
+        "cfg_version": "Version : {version}",
+        "cfg_output_name": "Nom de sortie : {name}",
+        "none": "— aucun —",
     },
     "es": {
         "choose_layout": "Elija un layout ({opts}) [All]: ",
@@ -848,6 +880,16 @@ I18N = {
         "logo_found": "Logo encontrado: {file}",
         "logo_not_found": "No se encontró logo (buscado '{name}'). Se continúa sin logo.",
         "count_mismatch_warn": "Cantidad distinta para '{base}': face={face} back={back} -> se usa face={use}",
+        "using_pdfconfig": "Usando pdfConfig.txt desde:\n{path}\nTodos los diálogos de la interfaz se omitirán; los valores provienen de este archivo.",
+        "config_title": "Configuración",
+        "cfg_format": "Formato de carta: {id} ({name})",
+        "cfg_layouts": "Diseño(s): {layouts}",
+        "cfg_paper": "Papel: {paper}",
+        "cfg_quality": "Calidad: {quality}",
+        "cfg_bottom_text": "Texto inferior: {text}",
+        "cfg_version": "Versión: {version}",
+        "cfg_output_name": "Nombre de salida: {name}",
+        "none": "— ninguno —",
     },
     "it": {
         "choose_layout": "Scegli un layout ({opts}) [All]: ",
@@ -892,8 +934,131 @@ I18N = {
         "logo_found": "Logo trovato: {file}",
         "logo_not_found": "Nessun logo trovato (cercato '{name}'). Si procede senza logo.",
         "count_mismatch_warn": "Quantità diversa per '{base}': face={face} back={back} -> uso face={use}",
+        "using_pdfconfig": "Utilizzo pdfConfig.txt da:\n{path}\nTutte le richieste UI saranno ignorate; i valori provengono da questo file.",
+        "config_title": "Configurazione",
+        "cfg_format": "Formato carta: {id} ({name})",
+        "cfg_layouts": "Layout: {layouts}",
+        "cfg_paper": "Carta: {paper}",
+        "cfg_quality": "Qualità: {quality}",
+        "cfg_bottom_text": "Testo a piè di pagina: {text}",
+        "cfg_version": "Versione: {version}",
+        "cfg_output_name": "Nome output: {name}",
+        "none": "— nessuno —",
     },
 }
+
+# =========================================================
+# pdfConfig.txt  (Auto-Vorlage + Parser)
+# =========================================================
+PDF_CONFIG_NAME_DEFAULT = "pdfConfig.txt"
+
+def write_pdf_config_template(dst: Path) -> None:
+    """
+    Write an English-only template for pdfConfig.txt.
+    Created only if (a) INI does not exist and (b) the file does not yet exist.
+    Field order matches the UI order exactly.
+    """
+    if dst.exists():
+        return
+    lines = [
+        "# ------------------------------------------------------------",
+        "# pdfConfig.txt — Template (EN only)",
+        "# Copy this file into a card-image folder and adjust the values.",
+        "# If present, the UI prompts are skipped and values from this file",
+        "# are used for PDF generation.",
+        "# ------------------------------------------------------------",
+        "",
+        "# 1) CARD_FORMAT (numeric id):",
+        "#    1=Poker, 2=Euro, 3=Mini Euro, 4=American, 5=Mini American, 6=Custom (from INI).",
+        "#    Use the numeric id listed above. If invalid/empty, 1 (Poker) is used.",
+        "CARD_FORMAT=1",
+        "",
+        "# 2) LAYOUT:",
+        "#    Allowed values (case-insensitive): Standard | Bleed | Gutterfold | All",
+        "#    All = generates all supported layouts your images qualify for.",
+        "LAYOUT=All",
+        "",
+        "# 3) PAPER:",
+        "#    Allowed values (case-insensitive): Both | A4 | Letter",
+        "#    Both = generate A4 and Letter variants.",
+        "PAPER=Both",
+        "",
+        "# 4) QUALITY:",
+        "#    Allowed values (case-insensitive): Lossless | High | Medium | Low",
+        "#    Recommended default is High.",
+        "QUALITY=High",
+        "",
+        "# 5) BOTTOM_TEXT:",
+        "#    Optional free text printed centered in the footer (max 150 chars).",
+        "#    The sequence (C) is automatically converted to ©.",
+        "BOTTOM_TEXT=",
+        "",
+        "# 6) VERSION:",
+        "#    Optional version string printed bottom-left (e.g., v1.0 or date).",
+        "VERSION=",
+        "",
+        "# 7) OUTPUT_NAME:",
+        "#    Output base filename without .pdf (invalid characters are sanitized).",
+        "OUTPUT_NAME=cards",
+        "",
+    ]
+    try:
+        dst.write_text("\n".join(lines), encoding="utf-8")
+    except Exception:
+        pass
+
+def read_pdf_config(path: Path) -> Dict[str, str]:
+    """
+    Liest eine einfache KEY=VALUE Textdatei, ignoriert leere Zeilen und #–Kommentare.
+    Keys werden zu UPPERCASE normalisiert.
+    """
+    out: Dict[str, str] = {}
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            out[k.strip().upper()] = v.strip()
+    except Exception:
+        return {}
+    return out
+
+def _map_layout_value(v: str) -> List[str]:
+    s = (v or "").strip().lower()
+    if s in ("", "all", "a"):
+        return ["standard", "bleed", "gutterfold"]
+    if s in ("standard", "s", "3x3", "3x4", "3"):
+        return ["standard"]
+    if s in ("bleed", "b", "2x3", "2x5", "2"):
+        return ["bleed"]
+    if s in ("gutterfold", "g", "gf"):
+        return ["gutterfold"]
+    # Fallback
+    return ["standard", "bleed", "gutterfold"]
+
+def _map_quality_value(v: str) -> str:
+    s = (v or "").strip().lower()
+    if s in ("lossless", "l", "loss", "0"):
+        return "lossless"
+    if s in ("high", "h", "1", ""):
+        return "high"
+    if s in ("medium", "m", "med", "2"):
+        return "medium"
+    if s in ("low", "lo", "3"):
+        return "low"
+    return "high"
+
+def _map_paper_value(v: str):
+    s = (v or "").strip().lower()
+    if s in ("a4", "a"):
+        return [(A4, "_A4")]
+    if s in ("letter", "l"):
+        return [(letter, "_Letter")]
+    # default "both"
+    return [(A4, "_A4"), (letter, "_Letter")]
 
 def t(key: str, **kwargs) -> str:
     lang = I18N.get(LANG, I18N["de"])
@@ -1389,8 +1554,14 @@ def prompt_pagesize_mode(args=None):
 
 def prompt_folder() -> Path:
     while True:
-        p = input(t("ask_folder")).strip().strip('"')
-        folder = Path(expanduser(p)).expanduser().resolve()
+        raw = input(t("ask_folder")).strip().strip('"')
+        # Wichtig: Leere Eingabe niemals akzeptieren ? direkt erneut fragen
+        if raw == "":
+            print(t("invalid_folder"))
+            continue
+
+        # Erst nach nicht-leerer Eingabe den Pfad auflösen und validieren
+        folder = Path(expanduser(raw)).expanduser().resolve()
         if folder.exists() and folder.is_dir():
             return folder
         print(t("invalid_folder"))
@@ -2919,16 +3090,60 @@ def main():
     # 1) Sprache/Start + Header
     # -----------------------------
     args = parse_args()
-    if getattr(args, "lang", None):            # CLI-Sprache persistieren
+    # --- Immer beim Start: pdfConfig.txt im App-Ordner anlegen, falls (noch) nicht vorhanden ---
+    try:
+        cfg_default_path = get_app_dir() / PDF_CONFIG_NAME_DEFAULT
+        if not cfg_default_path.exists():
+            write_pdf_config_template(cfg_default_path)
+    except Exception:
+        # Template-Erzeugung darf den Start nicht verhindern
+        pass
+    if getattr(args, "lang", None):  # CLI-Sprache persistieren
         save_lang_to_ini(args.lang)
-    prompt_language_if_needed()                # lädt I18N + INI
+    prompt_language_if_needed()  # lädt I18N + INI
     clear_tmp_cache()
     _show_header()                             # rich-Header (oder print)
     print(t("startup_license"))
     print(" ")
 
     # -----------------------------
-    # 2) Kartenformat
+    # 2) ZUERST: Kartenordner abfragen
+    # -----------------------------
+    # (Pfad steht ab hier fest, aber noch KEINE Analysen/Warnungen ausführen.)
+    if getattr(args, "folder", None):
+        folder = Path(expanduser(args.folder)).expanduser().resolve()
+        if not (folder.exists() and folder.is_dir()):
+            if rprint:
+                rprint(Panel("Ungültiger Ordner. Bitte erneut wählen.", title="Fehler", border_style="red"))
+            else:
+                print("Ungültiger Ordner. Bitte erneut wählen.")
+            folder = prompt_folder()
+    else:
+        folder = prompt_folder()
+
+    # -----------------------------
+    # 2b) NEU: pdfConfig.txt im Kartenordner einlesen (wenn vorhanden)
+    # -----------------------------
+    cfg_txt = folder / PDF_CONFIG_NAME_DEFAULT
+    cfg = read_pdf_config(cfg_txt) if cfg_txt.exists() and cfg_txt.is_file() else {}
+    use_cfg = bool(cfg)
+    # Konsolenhinweis: pdfConfig.txt wird verwendet (mehrsprachig)
+    if use_cfg:
+        msg = t("using_pdfconfig", path=str(cfg_txt))
+        try:
+            if rprint and Panel:
+                rprint(Panel.fit(
+                    msg,
+                    title=t("config_title"),
+                    border_style="green"
+                ))
+            else:
+                print(msg)
+        except Exception:
+            print(msg)
+
+    # -----------------------------
+    # 3) DANN: Kartenformat (aus Config oder via Prompt)
     # -----------------------------
     def _prompt_card_format(args=None) -> dict:
         # 1) CLI-Override
@@ -2963,34 +3178,33 @@ def main():
         # 3) Fallback: bestehende Funktion (dein alter Prompt)
         return prompt_card_format()
 
-    fmt = _prompt_card_format(args)
+    if use_cfg:
+        # CARD_FORMAT aus cfg (ID -> Dict)
+        try:
+            wanted_id = int(cfg.get("CARD_FORMAT", "1"))
+        except Exception:
+            wanted_id = 1
+        fmt = next((f for f in CARD_FORMATS if int(f.get('id', -1)) == wanted_id), CARD_FORMATS[0])
+    else:
+        fmt = _prompt_card_format(args)    
     apply_card_format(fmt)
     print_selected_format_info(fmt)
     _show_format_table(fmt)  # rich-Tabelle + Hinweis-Panel (falls rich vorhanden)
 
     # -----------------------------
-    # 3) Layout + Papierformat
+    # 4) JETZT: Layout + Papierformat (aus Config oder via Prompt)
     # -----------------------------
-    layout_keys = prompt_layout_dynamic(args)   # ["standard", ...]
-    size_modes  = prompt_pagesize_mode(args)    # [(A4,"_A4"), ...]
-    # Ab hier wurden NUR nicht-dateibasierte Entscheidungen getroffen.
-    
-    # 3b) Qualität (jetzt VOR der Ordnerwahl; lokalisierter Select via questionary)
-    quality_key = prompt_quality(args)
+    if use_cfg:
+        layout_keys = _map_layout_value(cfg.get("LAYOUT", "All"))
+        size_modes  = _map_paper_value(cfg.get("PAPER", "Both"))
+    else:
+        layout_keys = prompt_layout_dynamic(args)  # ["standard", ...]
+        size_modes  = prompt_pagesize_mode(args)   # [(A4,"_A4"), ...]
 
     # -----------------------------
-    # 4) Kartenordner (JETZT abfragen!)
+    # 5) Qualität (aus Config oder via Prompt)
     # -----------------------------
-    if getattr(args, "folder", None):
-        folder = Path(expanduser(args.folder)).expanduser().resolve()
-        if not (folder.exists() and folder.is_dir()):
-            if rprint:
-                rprint(Panel("Ungültiger Ordner. Bitte erneut wählen.", title="Fehler", border_style="red"))
-            else:
-                print("Ungültiger Ordner. Bitte erneut wählen.")
-            folder = prompt_folder()
-    else:
-        folder = prompt_folder()
+    quality_key = _map_quality_value(cfg.get("QUALITY", "")) if use_cfg else prompt_quality(args)
 
     # Jetzt erst Paare suchen – der Ordner ist garantiert gesetzt
     pairs = find_card_pairs(folder)
@@ -3007,7 +3221,7 @@ def main():
             return
 
     # -----------------------------
-    # 5) Rückseiten-Handling, Analyse, Bleed-Checks
+    # 6) Rückseiten-Handling, Analyse, Bleed-Checks
     #    (deine bestehende Logik – unverändert übernommen)
     # -----------------------------
     include_back_pages = True
@@ -3073,7 +3287,7 @@ def main():
         pause_before_exit()
         return
 
-    # 6) Rulebook/Logo früh ankündigen, dann weitere Eingaben
+    # 7) Rulebook/Logo früh ankündigen, dann weitere Eingaben
     # -------------------------------------------------------
     # Rulebook-Bilder finden & Nutzer informieren
     rulebook_images = find_rulebook_images(folder, RULEBOOK_BASENAME)
@@ -3091,18 +3305,65 @@ def main():
     else:
         print(t("logo_not_found", name=LOGO_BASENAME))
 
-    # 7) Weitere Eingaben (Qualität/Urheber/Version/Ausgabename)
+    # 8) Weitere Eingaben (Urheber/Version/Ausgabename) – aus Config oder via Prompt
     # ----------------------------------------------------------
     # (Logo bereits ermittelt; rulebook_images ebenfalls vorhanden)
-    copyright_name = getattr(args, "copyright", None)
-    if copyright_name is None:
-        copyright_name = prompt_copyright_name()
-    version_str = getattr(args, "version", None) or prompt_version()
-    out_base    = getattr(args, "out_base", None)  or prompt_output_base("cards")
+    if use_cfg:
+        # BOTTOM_TEXT
+        raw_bottom = cfg.get("BOTTOM_TEXT", "")
+        bottom_txt = raw_bottom.replace("(C)", "©").replace("(c)", "©") if raw_bottom else None
+        # VERSION
+        version_str = cfg.get("VERSION", "").strip()
+        # OUTPUT_NAME
+        out_base = make_safe_name(cfg.get("OUTPUT_NAME", "cards"))
+        # Für Konsistenz mit existierenden Variablennamen:
+        copyright_name = (bottom_txt or None)
+        try:
+            # Layouts anzeigen: "Standard, Bleed, Gutterfold"
+            def _cap(s: str) -> str:
+                return s[:1].upper() + s[1:] if s else s
+            layouts_disp = ", ".join(_cap(k) for k in layout_keys)
+            # Paper anzeigen: Both | A4 | Letter
+            if len(size_modes) >= 2:
+                paper_disp = "Both"
+            else:
+                paper_disp = "A4" if (size_modes and len(size_modes[0]) > 1 and size_modes[0][1] == "_A4") else "Letter"
+            # Quality anzeigen: Lossless|High|Medium|Low
+            _qmap = {"lossless": "Lossless", "high": "High", "medium": "Medium", "low": "Low"}
+            quality_disp = _qmap.get(quality_key, quality_key)
+            # Optionalfelder anzeigen
+            text_disp = (bottom_txt.strip() if (bottom_txt and bottom_txt.strip()) else t("none"))
+            version_disp = (version_str if version_str else t("none"))
+            # Kartenformat (ID + Name)
+            fmt_id = str(fmt.get("id", ""))
+            fmt_name = str(fmt.get("name", ""))
+            summary_lines = [
+                t("cfg_format", id=fmt_id, name=fmt_name),
+                t("cfg_layouts", layouts=layouts_disp),
+                t("cfg_paper", paper=paper_disp),
+                t("cfg_quality", quality=quality_disp),
+                t("cfg_bottom_text", text=text_disp),
+                t("cfg_version", version=version_disp),
+                t("cfg_output_name", name=out_base),
+            ]
+            summary_msg = "\n".join(summary_lines)
+            if rprint and Panel:
+                rprint(Panel.fit(summary_msg, title=t("config_title"), border_style="cyan"))
+            else:
+                print(summary_msg)
+        except Exception:
+            # Bei jeglichem Fehler die Generierung nicht blockieren
+            pass
+    else:
+        copyright_name = getattr(args, "copyright", None)
+        if copyright_name is None:
+            copyright_name = prompt_copyright_name()
+        version_str = getattr(args, "version", None) or prompt_version()
+        out_base = getattr(args, "out_base", None) or prompt_output_base("cards")    
     generation_dir = build_generation_dir(out_base)
     
     # -----------------------------
-    # 8) Warm-Up (optional, beschleunigt das spätere Zeichnen)
+    # 9) Warm-Up (optional, beschleunigt das spätere Zeichnen)
     # -----------------------------
     if "standard" in [k.lower() for k in layout_keys]:
         all_imgs_std = _collect_all_images_for("standard", pairs)
@@ -3113,7 +3374,7 @@ def main():
         warmup_preprocessing(all_imgs_bleed, quality_key, get_bleed_box_inches(), crop_bleed=False)
 
     # -----------------------------
-    # 9) PDF-Erzeugung (wie bisher)
+    # 10) PDF-Erzeugung (wie bisher)
     # -----------------------------
     all_have_bleed = (pairs_for_2x3 and len(pairs_for_2x3) == len(pairs))
 
@@ -3145,11 +3406,9 @@ def main():
                 outer_keep = OUTER_BLEED_KEEP_PX if all_have_bleed else 0
                
             # Ausgabepfad: Immer in den Generierungs-Unterordner schreiben
-            if len(size_modes) > 1:
-                out_path = (generation_dir / f"{out_base}{layout_suffix}{suffix}.pdf").resolve()
-            else:
-                out_path = (generation_dir / f"{out_base}{layout_suffix}.pdf").resolve()
-
+            # Wunsch: erst Papierformat, dann Layout  ? {out_base}{suffix}{layout_suffix}.pdf
+            out_path = (generation_dir / f"{out_base}{suffix}{layout_suffix}.pdf").resolve()
+            
             # Erzeugung
             generate_pdf(
                 layout_key=layout_key,
