@@ -1,4 +1,4 @@
-name: Mac .app bauen (Doppelklick)
+name: Mac .app + DMG bauen (Doppelklick)
 
 on:
   workflow_dispatch:
@@ -8,22 +8,30 @@ jobs:
     runs-on: macos-latest
 
     steps:
+      # --- Code holen
       - name: Code holen
         uses: actions/checkout@v4
 
+      # --- Python einrichten
       - name: Python einrichten
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      # --- Abhängigkeiten installieren
       - name: Abhängigkeiten installieren
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Sicherstellen, dass rich + questionary wirklich installiert sind
-          pip install rich questionary
 
-      # 1) PyInstaller Build (ONEDIR wird zuverlässig eingebettet)
+      # --- (Optional) Homebrew-Tools für DMG
+      # create-dmg ist das am weitesten verbreitete, einfache CLI zum Erzeugen schöner DMGs
+      - name: create-dmg installieren
+        run: |
+          brew update
+          brew install create-dmg
+
+      # --- 1) PyInstaller-Build (ONEDIR wird zuverlässig eingebettet)
       - name: Build mit PyInstaller
         run: |
           pyinstaller --clean --noconfirm \
@@ -32,8 +40,8 @@ jobs:
             --onedir \
             PnP_PDF_Creator.py
 
-      # 2) Wrapper-App erzeugen (macOS .app, die Terminal öffnet)
-      - name: Wrapper .app erstellen (Doppelklick → Terminal)
+      # --- 2) Wrapper .app erzeugen (Doppelklick ? Terminal)
+      - name: Wrapper .app erstellen (Doppelklick ? Terminal)
         run: |
           set -e
 
@@ -42,12 +50,12 @@ jobs:
 
           # Sicherstellen, dass PyInstaller-Ausgabe korrekt ist
           if [ ! -d "dist/PnP PDF Creator" ]; then
-            echo "❌ dist/PnP PDF Creator fehlt."
+            echo "? dist/PnP PDF Creator fehlt."
             exit 1
           fi
 
           if [ ! -f "dist/PnP PDF Creator/PnP PDF Creator" ]; then
-            echo "❌ Binary fehlt."
+            echo "? Binary fehlt."
             ls -la "dist/PnP PDF Creator"
             exit 1
           fi
@@ -80,28 +88,72 @@ jobs:
           mkdir -p "PnP PDF Creator.app/Contents/Resources/tool"
           cp -R "dist/PnP PDF Creator/." "PnP PDF Creator.app/Contents/Resources/tool/"
 
-          # Minimaler Info.plist
+          # Minimaler Info.plist (optional, falls osacompile sie nicht setzt)
           /usr/libexec/PlistBuddy -c "Set :CFBundleName 'PnP PDF Creator'" "PnP PDF Creator.app/Contents/Info.plist" || true
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 'PnP PDF Creator'" "PnP PDF Creator.app/Contents/Info.plist" || true
 
-          echo "✅ Wrapper-App erstellt:"
+          echo "? Wrapper-App erstellt:"
           ls -la "PnP PDF Creator.app"
 
-      # 3) Ad-hoc signieren (macOS sonst „beschädigt“ Warnung)
+      # --- 3) Ad-hoc signieren (vermeidet 'beschädigt'-Warnung auf vielen Systemen)
       - name: Wrapper-App ad-hoc signieren
         run: |
           codesign --force --deep --sign - "PnP PDF Creator.app"
           codesign -dv --verbose=2 "PnP PDF Creator.app" || true
 
-      # 4) ZIP erzeugen für Release / Download
-      - name: Wrapper-App verpacken
+      # --- 4) ZIP für schnellen Download (optional beibehalten)
+      - name: Wrapper-App als ZIP verpacken
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
             "PnP PDF Creator.app" \
             "PnP_PDF_Creator_macOS_APP.zip"
 
-      - name: Artefakt hochladen
+      # --- 5) DMG erstellen (schönes, benutzerfreundliches Installer-Image)
+      - name: DMG erstellen
+        run: |
+          # Entferne ggf. alte DMG-Datei
+          rm -f "PnP_PDF_Creator_macOS.dmg"
+
+          # create-dmg: einfaches Layout mit App und App-Ordner-Link
+          create-dmg \
+            --volname "PnP PDF Creator" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --hide-extension "PnP PDF Creator.app" \
+            --icon "PnP PDF Creator.app" 180 180 \
+            --app-drop-link 420 180 \
+            "PnP_PDF_Creator_macOS.dmg" \
+            "PnP PDF Creator.app"
+
+      # --- 6) DMG ad-hoc signieren (optional; für notarization später ersetzen)
+      - name: DMG ad-hoc signieren
+        run: |
+          codesign --force --sign - "PnP_PDF_Creator_macOS.dmg" || true
+          spctl -a -vv "PnP_PDF_Creator_macOS.dmg" || true
+
+      # --- 7) Artefakte hochladen (ZIP + DMG)
+      - name: Artefakte hochladen (ZIP)
         uses: actions/upload-artifact@v4
         with:
           name: PnP_PDF_Creator_macOS_APP
           path: PnP_PDF_Creator_macOS_APP.zip
+
+      - name: Artefakte hochladen (DMG)
+        uses: actions/upload-artifact@v4
+        with:
+          name: PnP_PDF_Creator_macOS_DMG
+          path: PnP_PDF_Creator_macOS.dmg
+
+      # --- (Optional) GitHub Release erstellen und DMG/ZIP anhängen
+      # Aktiviere diesen Schritt, wenn du bei workflow_dispatch gleich ein Release willst.
+      # - name: Release erstellen
+      #   uses: softprops/action-gh-release@v2
+      #   with:
+      #     tag_name: v1.3
+      #     name: "PnP PDF Creator v1.3"
+      #     body: "macOS .app + DMG"
+      #     draft: false
+      #     prerelease: false
+      #     files: |
+      #       PnP_PDF_Creator_macOS_APP.zip
+      #       PnP_PDF_Creator_macOS.dmg
