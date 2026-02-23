@@ -710,7 +710,7 @@ I18N = {
         "error_gutterfold_space": (
             "Zu wenig Platz für Gutterfold: verfügbar {avail:.1f} pt, "
             "benötigt {need:.1f} pt (Rand: {margin} cm; Kopf-Reserve: {top:.1f} pt; "
-        "Fuß-Reserve: {bottom:.1f} pt)."
+            "Fuß-Reserve: {bottom:.1f} pt)."   
         ),
         "rulebook_found": "Rulebook-Seiten gefunden: {files}",
         "rulebook_not_found": "Keine Rulebook-Seiten gefunden (Suche nach '{name}*').",
@@ -728,6 +728,9 @@ I18N = {
         "cfg_version": "Version: {version}",
         "cfg_output_name": "Dateiname: {name}",
         "none": "— kein —",
+        "exit_ok": "Fertig. Programmende.",
+        "exit_err_header": "[FEHLER] Es ist ein unerwarteter Fehler aufgetreten:",
+        "exit_press_enter": "Drücke Enter, um zu schließen…",
     },
     "en": {
         "choose_layout": "Choose layout ({opts}) [All]: ",
@@ -782,6 +785,9 @@ I18N = {
         "cfg_version": "Version: {version}",
         "cfg_output_name": "Output name: {name}",
         "none": "— none —",
+        "exit_ok": "Done. Program finished.",
+        "exit_err_header": "[ERROR] An unexpected error occurred:",
+        "exit_press_enter": "Press Enter to close…",
     },
     "fr": {
         "choose_layout": "Choisissez un layout ({opts}) [All] : ",
@@ -836,6 +842,9 @@ I18N = {
         "cfg_version": "Version : {version}",
         "cfg_output_name": "Nom de sortie : {name}",
         "none": "— aucun —",
+        "exit_ok": "Terminé. Fin du programme.",
+        "exit_err_header": "[ERREUR] Une erreur inattendue s’est produite :",
+        "exit_press_enter": "Appuyez sur Entrée pour fermer…",
     },
     "es": {
         "choose_layout": "Elija un layout ({opts}) [All]: ",
@@ -890,6 +899,9 @@ I18N = {
         "cfg_version": "Versión: {version}",
         "cfg_output_name": "Nombre de salida: {name}",
         "none": "— ninguno —",
+        "exit_ok": "Listo. Fin del programa.",
+        "exit_err_header": "[ERROR] Se produjo un error inesperado:",
+        "exit_press_enter": "Pulsa Enter para cerrar…",
     },
     "it": {
         "choose_layout": "Scegli un layout ({opts}) [All]: ",
@@ -944,6 +956,9 @@ I18N = {
         "cfg_version": "Versione: {version}",
         "cfg_output_name": "Nome output: {name}",
         "none": "— nessuno —",
+        "exit_ok": "Fatto. Fine del programma.",
+        "exit_err_header": "[ERRORE] Si è verificato un errore imprevisto:",
+        "exit_press_enter": "Premi Invio per chiudere…",
     },
 }
 
@@ -3425,4 +3440,11 @@ def main():
             print(t("done", path=out_path))
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+        pause_before_exit("\n" + t("exit_ok"))
+    except Exception:
+        print("\n" + t("exit_err_header") + "\n")
+        import traceback
+        traceback.print_exc()
+        pause_before_exit("\n" + t("exit_press_enter"))
