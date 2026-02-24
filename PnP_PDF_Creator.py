@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 """
 PnP PDF Creator
-macOS writable paths patch (Documents-based)
 Copyright (c) 2026 Raoul Schaupp
 
-This software is provided free of charge.
-
-Permission is granted to use, copy, and redistribute this software,
-including the compiled executable, for private and non-commercial purposes,
-provided that this notice is included unchanged.
-
-Redistribution of this executable in unmodified form is explicitly permitted,
-free of charge, including via third-party platforms such as itch.io.
+License summary (see LICENSE.txt for full terms)
+- This license applies to the SOFTWARE (PnP PDF Creator) only.
+- Output created with the software (PDFs/files you generate) is yours and has no restrictions.
+- You may use the software for any purpose, including internal commercial use, as long as you do NOT
+  sell, monetize, or commercially exploit the software itself.
+- You may copy and redistribute the software (including the compiled executable) only if:
+  (a) redistribution is free of charge (no paid access / no paywalls / no monetized hosting),
+  (b) the executable is unmodified, and
+  (c) this license notice (and LICENSE.txt) is included unchanged.
 
 ------------------------------------------------------------
 Third-Party Software and Licenses
