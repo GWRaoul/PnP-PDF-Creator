@@ -25,16 +25,16 @@ jobs:
           brew update
           brew install create-dmg
 
-      # 1) PyInstaller: echte .app bauen
+      # 1) PyInstaller: echte .app bauen (kein AppleScript-Wrapper!)
       - name: Build mit PyInstaller (macOS .app)
         run: |
           set -euo pipefail
 
-          # optional: diagnose
-          echo "== requirements.txt =="
-          cat requirements.txt
+          # Sanity checks: liegen Dateien wirklich im Root?
+          test -f "PnP_PDF_Creator.py"
+          test -f "requirements.txt"
+          test -f "PnP_PDF_Creator.icns"
 
-          # PyInstaller Build: .app ohne Terminal (windowed)
           pyinstaller --clean --noconfirm \
             --name "PnP PDF Creator" \
             --icon "PnP_PDF_Creator.icns" \
@@ -45,14 +45,14 @@ jobs:
           echo "== dist Inhalt =="
           ls -la dist
 
-          # Prüfen, ob die .app da ist
+          # Prüfen, ob die .app existiert
           if [ ! -d "dist/PnP PDF Creator.app" ]; then
             echo "❌ dist/PnP PDF Creator.app fehlt."
             find dist -maxdepth 3 -type d -print
             exit 1
           fi
 
-      # 2) (Optional) Ad-hoc signieren (hilft oft gegen Warnungen)
+      # 2) Optional: Ad-hoc signieren (hilft oft gegen Warnungen)
       - name: App ad-hoc signieren
         run: |
           codesign --force --deep --sign - "dist/PnP PDF Creator.app" || true
@@ -81,7 +81,7 @@ jobs:
             "PnP_PDF_Creator_macOS.dmg" \
             "dist/PnP PDF Creator.app"
 
-      # 5) (Optional) DMG ad-hoc signieren
+      # 5) Optional: DMG ad-hoc signieren
       - name: DMG ad-hoc signieren
         run: |
           codesign --force --sign - "PnP_PDF_Creator_macOS.dmg" || true
