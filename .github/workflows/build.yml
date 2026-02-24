@@ -5,7 +5,6 @@ on:
 jobs:
   build-mac:
     runs-on: macos-latest
-
     steps:
       - name: Code holen
         uses: actions/checkout@v4
@@ -36,6 +35,8 @@ jobs:
             --name "PnP PDF Creator" \
             --icon "PnP_PDF_Creator.icns" \
             --onedir \
+            --collect-all rich \
+            --collect-submodules rich._unicode_data \
             PnP_PDF_Creator.py
 
           echo "== dist Inhalt =="
@@ -48,16 +49,13 @@ jobs:
       - name: Wrapper .app erstellen (Terminal do script)
         run: |
           set -euo pipefail
-
           cat > launcher.applescript <<'APPLESCRIPT'
           on run
             set appName to "PnP PDF Creator"
             set bundlePath to POSIX path of (path to me)
             set toolDir to bundlePath & "Contents/Resources/tool/"
             set exePath to toolDir & appName
-
             set cmd to "cd " & quoted form of toolDir & "; " & quoted form of exePath
-
             tell application "Terminal"
               activate
               do script cmd
@@ -65,14 +63,11 @@ jobs:
           end run
           APPLESCRIPT
 
-          # .app aus AppleScript bauen
           osacompile -o "PnP PDF Creator.app" launcher.applescript
 
-          # Icon setzen (Applet Icon)
           mkdir -p "PnP PDF Creator.app/Contents/Resources"
           cp "PnP_PDF_Creator.icns" "PnP PDF Creator.app/Contents/Resources/applet.icns"
 
-          # PyInstaller Output einbetten
           mkdir -p "PnP PDF Creator.app/Contents/Resources/tool"
           cp -R "dist/PnP PDF Creator/." "PnP PDF Creator.app/Contents/Resources/tool/"
 
@@ -96,7 +91,6 @@ jobs:
       - name: DMG erstellen
         run: |
           rm -f "PnP_PDF_Creator_macOS.dmg"
-
           create-dmg \
             --volname "PnP PDF Creator" \
             --window-pos 200 120 \
