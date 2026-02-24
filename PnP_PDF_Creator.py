@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 PnP PDF Creator
+macOS writable paths patch (Documents-based)
 Copyright (c) 2026 Raoul Schaupp
 
 This software is provided free of charge.
@@ -46,6 +47,7 @@ import tempfile
 import hashlib
 import sys
 import configparser
+import platform
 import argparse
 import io
 from os.path import expanduser
@@ -360,6 +362,9 @@ def draw_logo_in_header_band(c, logo_path, page_w, page_h, margins, header_h):
 
 LANG = ""  # runtime value
 
+# IMPORTANT: The *real* app name (Documents/<APP_NAME>/...)
+APP_NAME = "PnP PDF Creator"
+
 def get_app_dir() -> Path:
     """
     Directory where the EXE resides (PyInstaller) or script directory (normal python).
@@ -368,6 +373,31 @@ def get_app_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
+
+def is_macos_app() -> bool:
+    """
+    True if running as a frozen PyInstaller app on macOS.
+    This setup is subject to App Translocation read-only bundle paths.
+    """
+    return bool(getattr(sys, "frozen", False)) and sys.platform == "darwin"
+
+def get_macos_documents_base_dir() -> Path:
+    """
+    Variant B (user-friendly):
+    Use ~/Documents/PnP PDF Creator/ as writable base directory.
+    """
+    base = Path.home() / "Documents" / APP_NAME
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+def get_writable_base_dir() -> Path:
+   """
+    Windows/Linux: legacy (beside EXE/script).
+    macOS App: write to Documents/<APP_NAME>/ to avoid App Translocation paths.
+    """
+    if is_macos_app():
+        return get_macos_documents_base_dir()
+    return get_app_dir()
 
 def make_safe_name(name: str) -> str:
     """
@@ -389,12 +419,12 @@ def build_generation_dir(out_base: str) -> Path:
     """
     ts = datetime.now().strftime("%Y%m%d_%H%M")
     folder_name = f"{ts}_{make_safe_name(out_base)}"
-    gen_dir = get_app_dir() / folder_name
+    gen_dir = get_writable_base_dir() / folder_name
     gen_dir.mkdir(parents=True, exist_ok=True)
     return gen_dir
 
 def get_ini_path() -> Path:
-    return get_app_dir() / "PnP_PDF_Creator.ini"
+    return get_writable_base_dir() / "PnP_PDF_Creator.ini"
 
 # =========================================================
 # INI handling (UI language + cutmark settings)
@@ -3196,7 +3226,7 @@ def main():
     args = parse_args()
     # --- Immer beim Start: pdfConfig.txt im App-Ordner anlegen, falls (noch) nicht vorhanden ---
     try:
-        cfg_default_path = get_app_dir() / PDF_CONFIG_NAME_DEFAULT
+        cfg_default_path = get_writable_base_dir() / PDF_CONFIG_NAME_DEFAULT
         if not cfg_default_path.exists():
             write_pdf_config_template(cfg_default_path)
     except Exception:
