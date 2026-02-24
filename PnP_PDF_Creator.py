@@ -391,7 +391,7 @@ def get_macos_documents_base_dir() -> Path:
     return base
 
 def get_writable_base_dir() -> Path:
-   """
+    """
     Windows/Linux: legacy (beside EXE/script).
     macOS App: write to Documents/<APP_NAME>/ to avoid App Translocation paths.
     """
