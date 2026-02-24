@@ -41,6 +41,7 @@ In no event shall the author be liable for any claim, damages, or other liabilit
 import re
 import os
 import codecs
+import textwrap
 import tempfile
 import hashlib
 import sys
@@ -101,9 +102,14 @@ console = Console(force_terminal=True, color_system="auto") if _FORCE_RICH and C
 rprint = (console.print if console else None)
 
 # =========================================================
+# Global "already paused" flag (prevents double Enter)
+# =========================================================
+_PAUSE_ALREADY_SHOWN = False
+
+# =========================================================
 # Script version / debug
 # =========================================================
-SCRIPT_VERSION = 'V1.3-2026-02-23'
+SCRIPT_VERSION = 'V1.3-2026-02-24'
 DEBUG_PREPROCESS = False  # set True to print per-image crop/resize diagnostics
 
 # =========================================================
@@ -692,6 +698,7 @@ I18N = {
         "invalid_format": "Bitte 'A4', 'Letter' oder 'Both' eingeben.",
         "ask_folder": "Pfad zum Ordner mit PNG/JPG Kartenbildern: ",
         "invalid_folder": "Ungueltiger Pfad oder kein Ordner. Bitte erneut eingeben.",
+        "invalid_folder_path": "Ungueltiger Pfad oder kein Ordner: {path}\nBitte erneut eingeben.",
         "ask_logo": "Optional: Pfad zur Logo-Datei (Enter = auto: logo.png/jpg im Kartenordner): ",
         "logo_invalid": "Logo-Pfad ungueltig oder Datei nicht gefunden. Es wird ohne Logo fortgefahren.",
         "ask_quality": "Qualitaet waehlen (Lossless/High/Medium/Low) [High]: ",
@@ -699,7 +706,13 @@ I18N = {
         "ask_copyright": "Freitext unten (optional, max. 150 Zeichen): ",
         "ask_version": "Versionsnummer eingeben (Enter = leer): ",
         "ask_out_base": "Ausgabedatei Basisname (ohne .pdf) [{default}]: ",
-        "no_cards": "Keine Karten gefunden. Erwartet: Dateinamen enden auf 'a' oder 'b' (z.B. card01a.png / card01b.png) ODER enden auf '[face,<n>]' bzw. '[back,<n>]' (z.B. card01[face,001].png / card01[back,001].png).",
+        "no_cards": (
+            "Keine Karten gefunden im Ordner:\n{folder}\n\n"
+            "Erwartet: Dateinamen enden auf 'a' oder 'b' (z.B. card01a.png / card01b.png) "
+            "ODER enden auf '[face,<n>]' bzw. '[back,<n>]' (z.B. card01[face,001].png / card01[back,001].png)."
+        ),
+        "no_cards_examples": "Beispiele im Ordner: {files}{more}",
+        "no_cards_no_images": "Keine Bilddateien (.png/.jpg/.jpeg) im Ordner gefunden.",
         "done": "Fertig! PDF erstellt: {path}",
         "skip_2x3": "2x3 wird übersprungen: Kartenbilder haben keinen Bleed (mind. {minw}x{minh}) oder sind gemischt.",
         "skip_gutterfold_no_backs": "Gutterfold wird übersprungen: Keine Rückseiten gefunden und keine Datei mit dem Namen '{name}' im Kartenordner.",
@@ -749,6 +762,7 @@ I18N = {
         "invalid_format": "Please enter 'A4', 'Letter' or 'Both'.",
         "ask_folder": "Path to folder with PNG/JPG card images: ",
         "invalid_folder": "Invalid path or not a folder. Please try again.",
+        "invalid_folder_path": "Invalid path or not a folder: {path}\nPlease try again.",
         "ask_logo": "Optional: path to logo file (Enter = auto: logo.png/jpg in card folder): ",
         "logo_invalid": "Invalid logo path or file not found. Continuing without logo.",
         "ask_quality": "Choose quality (Lossless/High/Medium/Low) [High]: ",
@@ -756,7 +770,13 @@ I18N = {
         "ask_copyright": "Bottom free text (optional, max 150 chars): ",
         "ask_version": "Enter version string (Enter = empty): ",
         "ask_out_base": "Output base filename (without .pdf) [{default}]: ",
-        "no_cards": "No cards found. Expected filenames ending with 'a' or 'b' (e.g. card01a.png / card01b.png) OR ending with '[face,<n>]' / '[back,<n>]' (e.g. card01[face,001].png / card01[back,001].png).",
+        "no_cards": (
+            "No cards found in folder:\n{folder}\n\n"
+            "Expected filenames ending with 'a' or 'b' (e.g. card01a.png / card01b.png) "
+            "OR ending with '[face,<n>]' / '[back,<n>]' (e.g. card01[face,001].png / card01[back,001].png)."
+        ),
+        "no_cards_examples": "Examples found in folder: {files}{more}",
+        "no_cards_no_images": "No image files (.png/.jpg/.jpeg) found in the folder.",
         "done": "Done! PDF created: {path}",
         "skip_2x3": "Skipping 2x3: card images do not have bleed (min {minw}x{minh}) or are mixed.",
         "skip_gutterfold_no_backs": "Skipping Gutterfold: no backs found and no file named '{name}' in the card folder.",
@@ -806,6 +826,7 @@ I18N = {
         "invalid_format": "Veuillez entrer 'A4', 'Letter' ou 'Both'.",
         "ask_folder": "Chemin du dossier contenant les images PNG/JPG : ",
         "invalid_folder": "Chemin invalide ou ce n'est pas un dossier. Réessayez.",
+        "invalid_folder_path": "Chemin invalide ou ce n'est pas un dossier : {path}\nRéessayez.",
         "ask_logo": "Optionnel : chemin du logo (Entrer = auto : logo.png/jpg dans le dossier) : ",
         "logo_invalid": "Chemin du logo invalide ou fichier introuvable. Suite sans logo.",
         "ask_quality": "Choisir la qualite (Lossless/High/Medium/Low) [High] : ",
@@ -813,7 +834,13 @@ I18N = {
         "ask_copyright": "Texte libre en bas (optionnel, 150 caractères max) : ",
         "ask_version": "Entrer la version (Entrer = vide) : ",
         "ask_out_base": "Nom de fichier de sortie (sans .pdf) [{default}] : ",
-        "no_cards": "Aucune carte trouvée. Attendu : noms finissant par 'a' ou 'b' (ex. card01a.png / card01b.png) OU finissant par '[face,<n>]' / '[back,<n>]' (ex. card01[face,001].png / card01[back,001].png).",
+        "no_cards": (
+            "Aucune carte trouvée dans le dossier :\n{folder}\n\n"
+            "Noms attendus : se terminant par 'a' ou 'b' (ex. card01a.png / card01b.png) "
+            "OU se terminant par '[face,<n>]' / '[back,<n>]' (ex. card01[face,001].png / card01[back,001].png)."
+        ),
+        "no_cards_examples": "Exemples dans le dossier : {files}{more}",
+        "no_cards_no_images": "Aucun fichier image (.png/.jpg/.jpeg) trouvé dans le dossier.",
         "done": "Terminé ! PDF créé : {path}",
         "skip_2x3": "2x3 ignoré : les images n'ont pas de fond perdu (min {minw}x{minh}) ou sont mélangées.",
         "skip_gutterfold_no_backs": "Gutterfold ignoré : aucun verso trouvé et aucun fichier nommé '{name}' dans le dossier.",
@@ -863,6 +890,7 @@ I18N = {
         "invalid_format": "Por favor, introduce 'A4', 'Letter' o 'Both'.",
         "ask_folder": "Ruta a la carpeta con imágenes PNG/JPG: ",
         "invalid_folder": "Ruta inválida o no es una carpeta. Inténtalo de nuevo.",
+        "invalid_folder_path": "Ruta inválida o no es una carpeta: {path}\nInténtalo de nuevo.",
         "ask_logo": "Opcional: ruta del logo (Enter = auto: logo.png/jpg en la carpeta): ",
         "logo_invalid": "Ruta de logo inválida o archivo no encontrado. Continuando sin logo.",
         "ask_quality": "Elegir calidad (Lossless/High/Medium/Low) [High]: ",
@@ -870,7 +898,13 @@ I18N = {
         "ask_copyright": "Texto libre abajo (opcional, máx. 150 caracteres): ",
         "ask_version": "Introduce versión (Enter = vacío): ",
         "ask_out_base": "Nombre base de salida (sin .pdf) [{default}]: ",
-        "no_cards": "No se encontraron cartas. Se esperan nombres que terminen en 'a' o 'b' (p.ej. card01a.png / card01b.png) O que terminen en '[face,<n>]' / '[back,<n>]' (p.ej. card01[face,001].png / card01[back,001].png).",
+        "no_cards": (
+            "No se encontraron cartas en la carpeta:\n{folder}\n\n"
+            "Se esperan nombres que terminen en 'a' o 'b' (p. ej. card01a.png / card01b.png) "
+            "O que terminen en '[face,<n>]' / '[back,<n>]' (p. ej. card01[face,001].png / card01[back,001].png)."
+        ),
+        "no_cards_examples": "Ejemplos en la carpeta: {files}{more}",
+        "no_cards_no_images": "No se encontraron archivos de imagen (.png/.jpg/.jpeg) en la carpeta.",
         "done": "¡Listo! PDF creado: {path}",
         "skip_2x3": "Omitiendo 2x3: las imágenes no tienen sangrado (mín {minw}x{minh}) o están mezcladas.",
         "skip_gutterfold_no_backs": "Se omite Gutterfold: no se encontraron reversos y no hay un archivo llamado '{name}' en la carpeta.",
@@ -920,6 +954,7 @@ I18N = {
         "invalid_format": "Inserisci 'A4', 'Letter' o 'Both'.",
         "ask_folder": "Percorso della cartella con immagini PNG/JPG: ",
         "invalid_folder": "Percorso non valido o non è una cartella. Riprova.",
+        "invalid_folder_path": "Percorso non valido o non è una cartella: {path}\nRiprova.",
         "ask_logo": "Opzionale: percorso logo (Invio = auto: logo.png/jpg nella cartella): ",
         "logo_invalid": "Percorso logo non valido o file non trovato. Continuo senza logo.",
         "ask_quality": "Scegli qualita (Lossless/High/Medium/Low) [High]: ",
@@ -927,7 +962,13 @@ I18N = {
         "ask_copyright": "Testo libero in basso (opzionale, max 150 caratteri): ",
         "ask_version": "Inserisci versione (Invio = vuoto): ",
         "ask_out_base": "Nome base output (senza .pdf) [{default}]: ",
-        "no_cards": "Nessuna carta trovata. Atteso: nomi che terminano con 'a' o 'b' (es. card01a.png / card01b.png) O che terminano con '[face,<n>]' / '[back,<n>]' (es. card01[face,001].png / card01[back,001].png).",
+        "no_cards": (
+            "Nessuna carta trovata nella cartella:\n{folder}\n\n"
+            "Nomi attesi: terminano con 'a' o 'b' (es. card01a.png / card01b.png) "
+            "OPPURE terminano con '[face,<n>]' / '[back,<n>]' (es. card01[face,001].png / card01[back,001].png)."
+        ),
+        "no_cards_examples": "Esempi nella cartella: {files}{more}",
+        "no_cards_no_images": "Nessun file immagine (.png/.jpg/.jpeg) trovato nella cartella.",
         "done": "Fatto! PDF creato: {path}",
         "skip_2x3": "Salto 2x3: le immagini non hanno abbondanza (min {minw}x{minh}) o sono miste.",
         "skip_gutterfold_no_backs": "Salto Gutterfold: nessun retro trovato e nessun file chiamato '{name}' nella cartella.",
@@ -1081,14 +1122,60 @@ def t(key: str, **kwargs) -> str:
     return msg.format(**kwargs)
 
 # =========================================================
+# Rich-safe helpers (escape markup so literal [...] stays visible)
+# =========================================================
+def _rich_escape(text: str) -> str:
+    """Escape Rich markup so strings containing [...] render literally in Panels."""
+    try:
+        from rich.markup import escape
+        return escape(text)
+    except Exception:
+        return text
+
+def _show_panel(message: str, title: str = "", border_style: str = "red") -> None:
+    """Print a message either as Rich Panel (markup-safe) or plain text fallback."""
+    try:
+        if rprint and Panel:
+            rprint(Panel(_rich_escape(message), title=title, border_style=border_style))
+        else:
+            print(message)
+    except Exception:
+        print(message)
+
+def _sample_images_in_folder(folder: Path, limit: int = 5):
+    """Return (shown_str, more_str, count_total) for sample supported images in folder."""
+    try:
+        imgs = [p.name for p in folder.iterdir()
+            if p.is_file() and p.suffix.lower() in SUPPORTED_EXT]
+        imgs.sort(key=str.lower)
+        if not imgs:
+            return "", "", 0
+        shown = ", ".join(imgs[:limit])
+        more = f" … (+{len(imgs)-limit})" if len(imgs) > limit else ""
+        return shown, more, len(imgs)
+    except Exception:
+        return "", "", 0
+
+def _build_no_cards_message(folder: Path) -> str:
+    """Build localized 'no cards found' message including folder path and examples."""
+    base = t("no_cards", folder=str(folder))
+    shown, more, total = _sample_images_in_folder(folder, limit=5)
+    if total > 0:
+        base += "\n\n" + t("no_cards_examples", files=shown, more=more)
+    else:
+        base += "\n\n" + t("no_cards_no_images")
+    return base
+
+# =========================================================
 # Console pause helper (useful for PyInstaller EXE)
 # =========================================================
-def pause_before_exit(message: str = "") -> None:
-    """Wait for Enter so the console window stays open (mainly for EXE runs)."""
+def pause_before_exit(message: str = "", print_message: bool = True) -> None:
+    global _PAUSE_ALREADY_SHOWN
     try:
-        if message:
+        if message and print_message:
             print(message)
-        input('\n[Enter]')
+            _PAUSE_ALREADY_SHOWN = True
+            input('\n[Enter]')
     except Exception:
         pass
 
@@ -1572,14 +1659,14 @@ def prompt_folder() -> Path:
         raw = input(t("ask_folder")).strip().strip('"')
         # Wichtig: Leere Eingabe niemals akzeptieren ? direkt erneut fragen
         if raw == "":
-            print(t("invalid_folder"))
+            print(t("invalid_folder_path", path=raw))
             continue
 
         # Erst nach nicht-leerer Eingabe den Pfad auflösen und validieren
         folder = Path(expanduser(raw)).expanduser().resolve()
         if folder.exists() and folder.is_dir():
             return folder
-        print(t("invalid_folder"))
+        print(t("invalid_folder_path", path=raw))
 
 def prompt_logo_path(folder: Path) -> Optional[Path]:
     p = input(t("ask_logo")).strip().strip('"')
@@ -1681,7 +1768,9 @@ def find_card_pairs(folder: Path) -> List[Tuple[str, Optional[Path], Optional[Pa
 
     # Patterns
     # Legacy: ...a / ...b
-    ab_pattern = re.compile(r"^(.*)([ab])$", re.IGNORECASE)
+    # ab_pattern = re.compile(r"^(.*?)(?:[_\-\s]?)([ab])$", re.IGNORECASE)
+    ab_pattern = re.compile(r"^(.*?)(?:[\_\\-\\s]?)([ab])$", re.IGNORECASE)
+    
 
     # New scheme: base[face,NNN] OR base[back,NNN]
     # Wichtig: base = alles VOR der ersten Klammer!
@@ -3224,16 +3313,11 @@ def main():
     # Jetzt erst Paare suchen – der Ordner ist garantiert gesetzt
     pairs = find_card_pairs(folder)
     if not pairs:
-        # Nutzer nicht hängen lassen → einmalig erneute Abfrage
-        if rprint:
-            rprint(Panel(t("no_cards"), title=t("no_cards_title"), border_style="red"))
-        else:
-            print(t("no_cards"))
-        folder = prompt_folder()
-        pairs = find_card_pairs(folder)
-        if not pairs:
-            pause_before_exit(t("no_cards"))
-            return
+        # Kein erneutes Nachfragen: Fehlermeldung zeigen und dann per Enter beenden.
+        msg = _build_no_cards_message(folder)
+        _show_panel(msg, title=t("no_cards_title"), border_style="red")
+        pause_before_exit(t("exit_press_enter"), print_message=True)
+        return
 
     # -----------------------------
     # 6) Rückseiten-Handling, Analyse, Bleed-Checks
@@ -3442,9 +3526,14 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-        pause_before_exit("\n" + t("exit_ok"))
+        # Only pause once at the very end, and only if we did NOT already pause earlier
+        # (e.g. because we exited early due to "No cards found").
+        if not _PAUSE_ALREADY_SHOWN:
+            pause_before_exit("\n" + t("exit_ok"))
     except Exception:
         print("\n" + t("exit_err_header") + "\n")
         import traceback
         traceback.print_exc()
-        pause_before_exit("\n" + t("exit_press_enter"))
+        # If an earlier pause already happened, don't force a second Enter.
+        if not _PAUSE_ALREADY_SHOWN:
+            pause_before_exit("\n" + t("exit_press_enter"))
