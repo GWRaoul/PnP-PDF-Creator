@@ -2186,22 +2186,30 @@ def warmup_preprocessing(img_paths, quality_key, card_box_inches, crop_bleed):
     # Optionales Vorwärmen (zeigt Fortschritt); Zeichnen nutzt dann Cache
     if not img_paths:
         return
+
+    # Kein rich installiert oder kein Progress verfügbar -> stilles Warm-Up
     if (rprint is None) or (Progress is None):
-        # Kein rich installiert ? stilles Warm-Up
         for p in img_paths:
             preprocess_card_image_for_pdf(p, quality_key, card_box_inches, crop_bleed=crop_bleed)
         return
-    with Progress(
-        TextColumn("[bold cyan]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.percentage:>3.0f}%"),
-        TimeRemainingColumn(),
-        transient=True
-    ) as progress:
-        task = progress.add_task("Bilder vorbereiten…", total=len(img_paths))
+
+    # NEU: Rich kann in PyInstaller fehlen/teilweise kaputt sein -> fallback
+    try:
+        with Progress(
+            TextColumn("[bold cyan]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.percentage:>3.0f}%"),
+            TimeRemainingColumn(),
+            transient=True
+        ) as progress:
+            task = progress.add_task("Bilder vorbereiten…", total=len(img_paths))
+            for p in img_paths:
+                preprocess_card_image_for_pdf(p, quality_key, card_box_inches, crop_bleed=crop_bleed)
+                progress.advance(task)
+    except Exception:
+        # Fallback: stilles Warm-Up, aber NICHT crashen
         for p in img_paths:
             preprocess_card_image_for_pdf(p, quality_key, card_box_inches, crop_bleed=crop_bleed)
-            progress.advance(task)
 
 # =========================================================
 # Zentrierung mit druckfreiem Rand + Reserven (NEU)
