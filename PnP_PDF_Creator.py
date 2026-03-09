@@ -111,7 +111,7 @@ _PAUSE_ALREADY_SHOWN = False
 # =========================================================
 # Script version / debug
 # =========================================================
-SCRIPT_VERSION = 'V1.3-2026-02-24'
+SCRIPT_VERSION = 'V1.4-2026-03-09'
 DEBUG_PREPROCESS = False  # set True to print per-image crop/resize diagnostics
 
 # =========================================================
@@ -195,10 +195,6 @@ def apply_card_format(fmt: dict) -> None:
     BLEED_W_PX = iw + BLEED_LEFT_TOP_PX + BLEED_RIGHT_BOTTOM_PX
     BLEED_H_PX = ih + BLEED_LEFT_TOP_PX + BLEED_RIGHT_BOTTOM_PX
     STATE["current_format"] = fmt
-
-def is_mini_format(fmt: dict) -> bool:
-    """True für Mini Euro / Mini American (Name enthält 'Mini')."""
-    return 'mini' in str(fmt.get('name', '')).lower()
 
 def prompt_card_format() -> dict:
     """Prompt user for card format. Enter selects Poker (id=1)."""
@@ -461,6 +457,19 @@ def _get_positive_float(cp: configparser.ConfigParser, section: str, option: str
     except Exception:
         return fallback
         
+def _get_nonnegative_float(cp: configparser.ConfigParser, section: str, option: str, fallback: float) -> float:
+    """
+    Like _get_positive_float(), but allows 0.0 to support 'disable by zero'.
+    Negative values are clamped to 0.0.
+    """
+    try:
+        v = cp.getfloat(section, option, fallback=fallback)
+        if v < 0:
+            return 0.0
+        return float(v)
+    except Exception:
+        return fallback
+        
 def _get_outer_bleed_keep_px(cp: configparser.ConfigParser,
                              section: str,
                              option: str,
@@ -620,25 +629,11 @@ def load_assets_from_config(cp: configparser.ConfigParser) -> None:
 def load_cutmarks_from_config(cp: configparser.ConfigParser) -> None:
     # Load cutmark settings from INI into the global variables.
     global CUTMARK_LEN_PT_STD, CUTMARK_LINE_PT_STD, CUTMARK_LEN_PT_BLEED, CUTMARK_LINE_PT_BLEED, CUTMARK_COLOR, OUTER_BLEED_KEEP_PX
-    CUTMARK_LEN_PT_STD = _get_positive_float(cp, 'cutmarks', 'length_pt_standard', CUTMARK_LEN_PT_STD)
-    CUTMARK_LINE_PT_STD = _get_positive_float(cp, 'cutmarks', 'width_pt_standard', CUTMARK_LINE_PT_STD)
-    CUTMARK_LEN_PT_BLEED = _get_positive_float(cp, 'cutmarks', 'length_pt_bleed', CUTMARK_LEN_PT_BLEED)
-    CUTMARK_LINE_PT_BLEED = _get_positive_float(cp, 'cutmarks', 'width_pt_bleed', CUTMARK_LINE_PT_BLEED)
+    CUTMARK_LEN_PT_STD = _get_nonnegative_float(cp, 'cutmarks', 'length_pt_standard', CUTMARK_LEN_PT_STD)
+    CUTMARK_LINE_PT_STD = _get_nonnegative_float(cp, 'cutmarks', 'width_pt_standard', CUTMARK_LINE_PT_STD)
+    CUTMARK_LEN_PT_BLEED = _get_nonnegative_float(cp, 'cutmarks', 'length_pt_bleed', CUTMARK_LEN_PT_BLEED)
+    CUTMARK_LINE_PT_BLEED = _get_nonnegative_float(cp, 'cutmarks', 'width_pt_bleed', CUTMARK_LINE_PT_BLEED)
     CUTMARK_COLOR = cp.get('cutmarks', 'cutmark_color', fallback='#000000').strip()
-
-
-def parse_color(value: str):
-    """
-    Akzeptiert Hex (#RRGGBB) oder benannte Farben ('red', 'blue', ...).
-    Fällt bei Fehlern auf Schwarz zurück.
-    """
-    try:
-        v = (value or "").strip()
-        # lässt #RRGGBB / RRGGBB / benannte Farben zu
-        col = colors.toColor(v)  # kann #hex, 'red', '0xRRGGBB', etc.
-        return col
-    except Exception:
-        return black
 
 def save_lang_to_ini(lang: str) -> None:
     cp = load_config()
@@ -1111,7 +1106,42 @@ def read_pdf_config(path: Path) -> Dict[str, str]:
     except Exception:
         return {}
     return out
+    
 
+# =========================================================
+# Mixed card formats: CARD_FORMAT override per subfolder
+# =========================================================
+
+def _resolve_card_format_id(raw: str, default_id: int = 1) -> int:
+    """Return a valid CARD_FORMAT id (1..6). Invalid -> default_id."""
+    try:
+        v = int(str(raw).strip())
+    except Exception:
+        return int(default_id)
+    if 1 <= v <= 6:
+        return v
+    return int(default_id)
+
+
+def _fmt_by_id(fmt_id: int) -> dict:
+    """Return format dict from CARD_FORMATS by id; fallback to Poker."""
+    try:
+        fid = int(fmt_id)
+    except Exception:
+        fid = 1
+    fmt = next((f for f in CARD_FORMATS if int(f.get('id', -1)) == fid), None)
+    return fmt if fmt is not None else CARD_FORMATS[0]
+
+
+def read_card_format_override_only(cfg_path: Path, default_id: int) -> int:
+    """Read only CARD_FORMAT from a pdfConfig.txt; ignore all other keys."""
+    if not (cfg_path and cfg_path.exists() and cfg_path.is_file()):
+        return int(default_id)
+    cfg = read_pdf_config(cfg_path)
+    if not cfg:
+        return int(default_id)
+    return _resolve_card_format_id(cfg.get('CARD_FORMAT', ''), default_id=default_id)
+    
 def _map_layout_value(v: str) -> List[str]:
     s = (v or "").strip().lower()
     if s in ("", "all", "a"):
@@ -1172,12 +1202,48 @@ def _show_panel(message: str, title: str = "", border_style: str = "red") -> Non
     except Exception:
         print(message)
 
-def _sample_images_in_folder(folder: Path, limit: int = 5):
-    """Return (shown_str, more_str, count_total) for sample supported images in folder."""
+def _alnum_key(name: str):
+    """
+    Alphanumerischer Sort-Key: 'Folder2' kommt vor 'Folder10'.
+    """
+    import re as _re
+    parts = _re.split(r'(\d+)', (name or '').lower())
+    return [int(p) if p.isdigit() else p for p in parts]
+
+def iter_folders_dfs(root: Path):
+    """
+    Depth-First (Preorder) Traversierung:
+    root -> erster Unterordner -> dessen Unterordner -> ...
+    Unterordner werden jeweils alphanumerisch sortiert.
+    """
+    yield root
     try:
-        imgs = [p.name for p in folder.iterdir()
-            if p.is_file() and p.suffix.lower() in SUPPORTED_EXT]
-        imgs.sort(key=str.lower)
+        subdirs = [p for p in root.iterdir() if p.is_dir()]
+    except Exception:
+        subdirs = []
+    subdirs.sort(key=lambda p: _alnum_key(p.name))
+    for d in subdirs:
+        yield from iter_folders_dfs(d)
+
+
+def _sample_images_in_tree(root: Path, limit: int = 5):
+    """
+    Return (shown_str, more_str, count_total) for sample supported images in the whole tree.
+    Shows relative paths so users see the subfolder location.
+    DFS/Preorder folder walk with alphanumerical folder ordering.
+    """
+    try:
+        imgs = []
+        for folder in iter_folders_dfs(root):
+            try:
+                for p in folder.iterdir():
+                    if p.is_file() and p.suffix.lower() in SUPPORTED_EXT:
+                        rel = str(p.relative_to(root))
+                        imgs.append(rel)
+            except Exception:
+                continue
+        # Deterministic ordering for display (alphanumerical over the relative path)
+        imgs.sort(key=_alnum_key)
         if not imgs:
             return "", "", 0
         shown = ", ".join(imgs[:limit])
@@ -1189,7 +1255,7 @@ def _sample_images_in_folder(folder: Path, limit: int = 5):
 def _build_no_cards_message(folder: Path) -> str:
     """Build localized 'no cards found' message including folder path and examples."""
     base = t("no_cards", folder=str(folder))
-    shown, more, total = _sample_images_in_folder(folder, limit=5)
+    shown, more, total = _sample_images_in_tree(folder, limit=5)
     if total > 0:
         base += "\n\n" + t("no_cards_examples", files=shown, more=more)
     else:
@@ -1698,25 +1764,6 @@ def prompt_folder() -> Path:
             return folder
         print(t("invalid_folder_path", path=raw))
 
-def prompt_logo_path(folder: Path) -> Optional[Path]:
-    p = input(t("ask_logo")).strip().strip('"')
-    if p:
-        lp = Path(expanduser(p)).expanduser().resolve()
-        if lp.exists() and lp.is_file() and lp.suffix.lower() in SUPPORTED_EXT:
-            return lp
-        print(t("logo_invalid"))
-        return None
-
-    for name in ("logo.png", "logo.jpg", "logo.jpeg"):
-        cand = folder / name
-        if cand.exists() and cand.is_file():
-            return cand
-    for name in ("logo.png", "logo.jpg", "logo.jpeg"):
-        cand = Path.cwd() / name
-        if cand.exists() and cand.is_file():
-            return cand
-    return None
-
 def prompt_quality(args=None) -> str:
     # 1) CLI-Override
     if args and getattr(args, "quality", None):
@@ -1795,12 +1842,16 @@ def find_card_pairs(folder: Path) -> List[Tuple[str, Optional[Path], Optional[Pa
     Rückgabe ist eine expandierte Liste, in der jedes Tupel eine physische Karte repräsentiert.
     """
     files = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in SUPPORTED_EXT]
+    # Deterministic processing order: sort files alphanumerically (natural sort)
+    def _nat_key(s: str):
+        parts = re.split(r'(\d+)', (s or '').lower())
+        return [int(p) if p.isdigit() else p for p in parts]
+    files.sort(key=lambda p: _nat_key(p.name))
 
     # Patterns
     # Legacy: ...a / ...b
     # ab_pattern = re.compile(r"^(.*?)(?:[_\-\s]?)([ab])$", re.IGNORECASE)
     ab_pattern = re.compile(r"^(.*?)(?:[\_\\-\\s]?)([ab])$", re.IGNORECASE)
-    
 
     # New scheme: base[face,NNN] OR base[back,NNN]
     # Wichtig: base = alles VOR der ersten Klammer!
@@ -1863,7 +1914,7 @@ def find_card_pairs(folder: Path) -> List[Tuple[str, Optional[Path], Optional[Pa
 
     # Sortierung: base (case-insensitiv)
     def sort_key(item):
-        return item[1]["base"].lower()
+        return _nat_key(str(item[1].get('base', '')))
 
     expanded: List[Tuple[str, Optional[Path], Optional[Path]]] = []
 
@@ -1905,6 +1956,22 @@ def find_card_pairs(folder: Path) -> List[Tuple[str, Optional[Path], Optional[Pa
                              face if (face and face.exists()) else face,
                              back  if (back  and back.exists())  else back))
     return expanded
+
+def find_card_pairs_recursive(root: Path) -> List[Tuple[str, Optional[Path], Optional[Path]]]:
+    """
+    Sammelt Kartenpaare aus root + allen Unterordnern in gewünschter Reihenfolge:
+    DFS/Preorder, Ordner alphanumerisch sortiert.
+    Wichtig: Pro Ordner separat paaren, um Key-Kollisionen (gleiche Basenames in
+    verschiedenen Ordnern) zu vermeiden.
+    """
+    all_pairs: List[Tuple[str, Optional[Path], Optional[Path]]] = []
+    for folder in iter_folders_dfs(root):
+        try:
+            all_pairs.extend(find_card_pairs(folder))
+        except Exception:
+            # robust weiter, wenn ein Ordner nicht lesbar ist
+            continue
+    return all_pairs
 
 def find_named_image_in_folder(folder: Path, basename: str) -> Optional[Path]:
     """Find an image file in folder with stem matching basename (Windows-typical: case-insensitive).
@@ -1969,9 +2036,6 @@ def fit_logo_with_constraints(logo_path: Path, max_w: float, max_h: float) -> Tu
         return w, h
     scale = min(max_w / w, max_h / h)
     return w * scale, h * scale
-
-def compute_grid_origin_centered(page_w: float, page_h: float, grid_w: float, grid_h: float) -> Tuple[float, float]:
-    return (page_w - grid_w) / 2.0, (page_h - grid_h) / 2.0
 
 # ---------------------------------------------------------
 # Rulebook-Seiten (Frontmatter) einfügen
@@ -2377,6 +2441,14 @@ def draw_gutter_bridge_marks(
     for x in x_positions:
         c.line(x, y_gutter_bottom, x, y_gutter_top)
     c.restoreState()
+    
+def cutmarks_enabled_standard() -> bool:
+    """Standard/Gutterfold cut marks are enabled only if length AND line width are > 0."""
+    return (CUTMARK_LEN_PT_STD > 0.0) and (CUTMARK_LINE_PT_STD > 0.0)
+
+def cutmarks_enabled_bleed() -> bool:
+    """Bleed cut marks are enabled only if length AND line width are > 0."""
+    return (CUTMARK_LEN_PT_BLEED > 0.0) and (CUTMARK_LINE_PT_BLEED > 0.0)
 
 def draw_cutmarks_gutterfold(
     c: canvas.Canvas,
@@ -2460,82 +2532,6 @@ def draw_corner_marks_grid(c: canvas.Canvas, x0: float, y0: float, card_w: float
     for (x, y) in ((x_left, y_bottom), (x_right, y_bottom), (x_left, y_top), (x_right, y_top)):
         c.line(x - half, y, x + half, y)
         c.line(x, y - half, x, y + half)
-    c.restoreState()
-
-def draw_inner_crosses_3x3(c: canvas.Canvas, x0: float, y0: float, card_w: float, card_h: float):
-    c.saveState()
-    c.setLineWidth(CUTMARK_LINE_PT_STD)
-    c.setStrokeColor(CUTMARK_COLOR)
-    half = CUTMARK_LEN_PT_STD / 2.0
-    xs = [x0 + card_w, x0 + 2 * card_w]
-    ys = [y0 + card_h, y0 + 2 * card_h]
-    for x in xs:
-        for y in ys:
-            c.line(x - half, y, x + half, y)
-            c.line(x, y - half, x, y + half)
-    c.restoreState()
-
-def draw_outer_marks_3x3(c: canvas.Canvas, x0: float, y0: float, card_w: float, card_h: float):
-    c.saveState()
-    c.setLineWidth(CUTMARK_LINE_PT_STD)
-    c.setStrokeColor(CUTMARK_COLOR)
-    half = CUTMARK_LEN_PT_STD / 2.0
-
-    grid_w = 3 * card_w
-    grid_h = 3 * card_h
-    xs = [x0 + card_w, x0 + 2 * card_w]
-    ys = [y0 + card_h, y0 + 2 * card_h]
-    y_bottom = y0
-    y_top = y0 + grid_h
-    x_left = x0
-    x_right = x0 + grid_w
-    for x in xs:
-        c.line(x, y_bottom - half, x, y_bottom + half)
-        c.line(x, y_top    - half, x, y_top    + half)
-        c.line(x - half, y_bottom, x + half, y_bottom)
-        c.line(x - half, y_top,    x + half, y_top)
-    for y in ys:
-        c.line(x_left  - half, y, x_left  + half, y)
-        c.line(x_right - half, y, x_right + half, y)
-        c.line(x_left,  y - half, x_left,  y + half)
-        c.line(x_right, y - half, x_right, y + half)
-    c.restoreState()
-
-def draw_corner_marks_3x3(c: canvas.Canvas, x0: float, y0: float, card_w: float, card_h: float):
-    """
-    Draw L-shaped corner marks at all 4 corners of the 3x3 grid.
-    Each segment is centered on the grid corner, so it is half inside and half outside,
-    matching the visual style of draw_outer_marks_3x3().
-    """
-    c.saveState()
-    c.setLineWidth(CUTMARK_LINE_PT_STD)
-    c.setStrokeColor(CUTMARK_COLOR)
-
-    half = CUTMARK_LEN_PT_STD / 2.0
-    grid_w = 3 * card_w
-    grid_h = 3 * card_h
-
-    x_left = x0
-    x_right = x0 + grid_w
-    y_bottom = y0
-    y_top = y0 + grid_h
-
-    # Bottom-left corner
-    c.line(x_left - half, y_bottom, x_left + half, y_bottom)   # horizontal (half out / half in)
-    c.line(x_left, y_bottom - half, x_left, y_bottom + half)   # vertical   (half out / half in)
-
-    # Bottom-right corner
-    c.line(x_right - half, y_bottom, x_right + half, y_bottom)
-    c.line(x_right, y_bottom - half, x_right, y_bottom + half)
-
-    # Top-left corner
-    c.line(x_left - half, y_top, x_left + half, y_top)
-    c.line(x_left, y_top - half, x_left, y_top + half)
-
-    # Top-right corner
-    c.line(x_right - half, y_top, x_right + half, y_top)
-    c.line(x_right, y_top - half, x_right, y_top + half)
-
     c.restoreState()
 
 def _compute_enclosing_edges(img_paths, cols, rows, is_back=False):
@@ -2702,45 +2698,11 @@ def place_images_grid_inner(
                 preserveAspectRatio=True, mask="auto"
             )
 
-    # Marken IMMER zeichnen – unabhängig davon, ob außen Bleed stand:
-    draw_inner_crosses_grid(c, x0, y0, card_w, card_h, cols, rows)
-    draw_outer_marks_grid(c, x0, y0, card_w, card_h, cols, rows)
-    draw_corner_marks_grid(c, x0, y0, card_w, card_h, cols, rows)
-
-# Abwärtskompatibel: 3x3 ruft generisch auf
-def place_images_3x3(c: canvas.Canvas,
-                     img_paths: List[Optional[Path]],
-                     x0: float, y0: float,
-                     card_w: float, card_h: float,
-                     is_back: bool,
-                     quality_key: str,
-                     card_box_inches: Tuple[float, float]):
-    # 9 images, 3 rows x 3 cols
-    for idx, img_path in enumerate(img_paths[:9]):
-        row = idx // 3
-        col = idx % 3
-
-        # Back side: mirror columns (as before)
-        if is_back:
-            col = 2 - col
-
-        x = x0 + col * card_w
-        y = y0 + (2 - row) * card_h
-
-        if img_path is None or not img_path.exists():
-            continue
-
-        processed = preprocess_card_image_for_pdf(img_path, quality_key, card_box_inches)
-        draw_w, draw_h = fit_image_into_box(processed, card_w, card_h)
-        dx = x + (card_w - draw_w) / 2.0
-        dy = y + (card_h - draw_h) / 2.0
-        c.drawImage(ImageReader(str(processed)), dx, dy, width=draw_w, height=draw_h,
-                    preserveAspectRatio=True, mask="auto")
-
-    draw_inner_crosses_3x3(c, x0, y0, card_w, card_h)
-    draw_outer_marks_3x3(c, x0, y0, card_w, card_h)
-    draw_corner_marks_3x3(c, x0, y0, card_w, card_h)
-
+    # Marken nur zeichnen, wenn via INI aktiv (Länge und Linienbreite > 0)
+    if cutmarks_enabled_standard():
+        draw_inner_crosses_grid(c, x0, y0, card_w, card_h, cols, rows)
+        draw_outer_marks_grid(c, x0, y0, card_w, card_h, cols, rows)
+        draw_corner_marks_grid(c, x0, y0, card_w, card_h, cols, rows)
 
 # =========================================================
 # Layout 2x3: landscape, outer cut marks ONLY for poker cutlines
@@ -2806,22 +2768,6 @@ def draw_cutmarks_bleed_outer_only(c: canvas.Canvas,
         c.line(x_right,   y, x_right + L, y)
     c.restoreState()
 
-def draw_cutmarks_2x3_outer_only(c: canvas.Canvas,
-                                 x0: float, y0: float,
-                                 cols: int, rows: int,
-                                 box_w: float, box_h: float):
-    # Weiterleitung auf generalisierte Funktion
-    draw_cutmarks_bleed_outer_only(c, x0, y0, cols, rows, box_w, box_h)
-
-def place_images_2x3(c: canvas.Canvas,
-                     img_paths: List[Optional[Path]],
-                     x0: float, y0: float,
-                     box_w: float, box_h: float,
-                     is_back: bool,
-                     quality_key: str,
-                     card_box_inches: Tuple[float, float]):
-    place_images_bleed_grid(c, img_paths, x0, y0, box_w, box_h, cols=3, rows=2, is_back=is_back, quality_key=quality_key, card_box_inches=card_box_inches)
-
 def place_images_bleed_grid(c: canvas.Canvas,
                             img_paths: List[Optional[Path]],
                             x0: float, y0: float,
@@ -2847,7 +2793,9 @@ def place_images_bleed_grid(c: canvas.Canvas,
         dy = y + (box_h - draw_h) / 2.0
         c.drawImage(ImageReader(str(processed)), dx, dy, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
 
-    draw_cutmarks_bleed_outer_only(c, x0, y0, cols=cols, rows=rows, box_w=box_w, box_h=box_h)
+    # Bleed-Marken nur zeichnen, wenn via INI aktiv (Länge und Linienbreite > 0)
+    if cutmarks_enabled_bleed():
+        draw_cutmarks_bleed_outer_only(c, x0, y0, cols=cols, rows=rows, box_w=box_w, box_h=box_h)
 
 def place_images_gutterfold_grid(
     c: canvas.Canvas,
@@ -2978,26 +2926,26 @@ def place_images_gutterfold_grid(
         y0 + grid_h
     })
 
-    draw_cutmarks_gutterfold(
-        c,
-        x0=x0,
-        y0=y0,
-        grid_w=grid_w,
-        grid_h=grid_h,
-        y_edges=y_edges,
-        x_marks=x_marks
-    )
+    if cutmarks_enabled_standard():
+        draw_cutmarks_gutterfold(
+            c,
+            x0=x0,
+            y0=y0,
+            grid_w=grid_w,
+            grid_h=grid_h,
+            y_edges=y_edges,
+            x_marks=x_marks
+        )
 
-    # ------------------------------------------------------------
-    # Brückenmarken im Gutter
-    # ------------------------------------------------------------
-    y_gutter_bottom = y0 + card_h
-    y_gutter_top    = y0 + card_h + fold_gutter
-    bridge_x = [x0 + j * card_w for j in range(cols + 1)]
-
-    draw_gutter_bridge_marks(
-        c, bridge_x, y_gutter_bottom, y_gutter_top
-    )
+        # ------------------------------------------------------------
+        # Brückenmarken im Gutter
+        # ------------------------------------------------------------
+        y_gutter_bottom = y0 + card_h
+        y_gutter_top = y0 + card_h + fold_gutter
+        bridge_x = [x0 + j * card_w for j in range(cols + 1)]
+        draw_gutter_bridge_marks(
+            c, bridge_x, y_gutter_bottom, y_gutter_top
+        )
 
 # =========================================================
 # PDF generation
@@ -3012,7 +2960,11 @@ def generate_pdf(layout_key: str,
                  quality_key: str,
                  include_back_pages: bool = True,
                  outer_bleed_keep_px: int = 0,
-                 rulebook_images: Optional[List[Path]] = None):
+                 rulebook_images: Optional[List[Path]] = None,
+                 existing_canvas: Optional[canvas.Canvas] = None,
+                 start_sheet_no: int = 0,
+                 draw_rulebook: bool = True,
+                 save_at_end: bool = True) -> int:
     """
     Dynamische Layout-Erzeugung:
       - 'standard' (Innenbilder, ohne Bleed, mit inneren Kreuzen + Außenmarken)
@@ -3044,16 +2996,22 @@ def generate_pdf(layout_key: str,
         )
         
         per_page = cols * rows
-        c = create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
-        draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode="portrait_pref", force_mode=RULEBOOK_ROTATE_MODE)
+        c = existing_canvas or create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
+        if draw_rulebook:
+            draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode="portrait_pref", force_mode=RULEBOOK_ROTATE_MODE)
         # Optionaler Spezialfall: Letter + Standard (früher 3x3 tiefer)
         bottom_y_override = BOTTOM_Y_LETTER_3X3 if pagesize_tuple == letter else None
         
-        sheet_no = 0
+        sheet_no = int(start_sheet_no)
         for group in chunk(pairs, per_page):
             sheet_no += 1
             fronts = [a for (_n, a, _b) in group] + [None] * (per_page - len(group))
             backs  = [b for (_n, _a, b) in group] + [None] * (per_page - len(group))
+            
+            # If there is no back page at all, drop the 'a' suffix (1,2,3...) instead of (1a,2a,3a...)
+            has_backs_on_this_sheet = include_back_pages and any(p for p in backs if p and p.exists())
+            front_label = f"{sheet_no}a" if has_backs_on_this_sheet else f"{sheet_no}"        
+            
             place_images_grid_inner(
                 c, fronts, x0, y0, card_w, card_h,
                 cols=cols, rows=rows, is_back=False,
@@ -3066,7 +3024,7 @@ def generate_pdf(layout_key: str,
                 header_h = _compute_header_h_for_logo(logo_path, page_w, page_h, MARGINS_PT, grid_top_y)
                 if header_h > 1.0:
                     draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
-            draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}a",
+            draw_bottom_line(c, page_w, copyright_name, version_str, front_label,
                              y_override=bottom_y_override)
             c.showPage()
             if include_back_pages and any(p for p in backs if p and p.exists()):
@@ -3085,8 +3043,9 @@ def generate_pdf(layout_key: str,
                 draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}b",
                                  y_override=bottom_y_override)
                 c.showPage()
-        c.save()
-        return
+        if save_at_end:
+            c.save()
+        return sheet_no
 
     # --- BLEED (nur Außenmarken) ---
     if lk in ("bleed", "2x3", "2x5"):
@@ -3107,13 +3066,19 @@ def generate_pdf(layout_key: str,
             MARGINS_PT, _logo_for_calc, BOTTOM_RESERVED_PT, extra_vertical_pt=0.0
         )
         per_page = cols * rows
-        c = create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
-        draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode="landscape_pref", force_mode=RULEBOOK_ROTATE_MODE)
-        sheet_no = 0
+        c = existing_canvas or create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
+        if draw_rulebook:
+            draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode="landscape_pref", force_mode=RULEBOOK_ROTATE_MODE)
+        sheet_no = int(start_sheet_no)
         for group in chunk(pairs, per_page):
             sheet_no += 1
             fronts = [a for (_n, a, _b) in group] + [None] * (per_page - len(group))
             backs  = [b for (_n, _a, b) in group] + [None] * (per_page - len(group))
+            
+            # If there is no back page at all, drop the 'a' suffix (1,2,3...) instead of (1a,2a,3a...)
+            has_backs_on_this_sheet = include_back_pages and any(p for p in backs if p and p.exists())
+            front_label = f"{sheet_no}a" if has_backs_on_this_sheet else f"{sheet_no}"            
+            
             place_images_bleed_grid(
                 c, fronts, x0, y0, box_w, box_h,
                 cols=cols, rows=rows, is_back=False,
@@ -3126,7 +3091,8 @@ def generate_pdf(layout_key: str,
                 header_h = _compute_header_h_for_logo(logo_path, page_w, page_h, MARGINS_PT, grid_top_y)
                 if header_h > 1.0:
                     draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
-            draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}a")
+            
+            draw_bottom_line(c, page_w, copyright_name, version_str, front_label)
             c.showPage()
             if include_back_pages and any(p for p in backs if p and p.exists()):
                 place_images_bleed_grid(
@@ -3141,8 +3107,9 @@ def generate_pdf(layout_key: str,
                         draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
                 draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}b")
                 c.showPage()
-        c.save()
-        return
+        if save_at_end:
+            c.save()
+        return sheet_no
 
     # --- GUTTERFOLD ---
     if lk in ("gutterfold",):
@@ -3181,10 +3148,11 @@ def generate_pdf(layout_key: str,
         )
         grid_top_y = y0 + grid_h
         per_page = cols  # je Spalte ein Paar
-        c = create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
-        draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode="landscape_pref", force_mode=RULEBOOK_ROTATE_MODE)
+        c = existing_canvas or create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
+        if draw_rulebook:
+            draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode="landscape_pref", force_mode=RULEBOOK_ROTATE_MODE)
         _apply_logo = bool(logo_path)
-        sheet_no = 0
+        sheet_no = int(start_sheet_no)
         for group in chunk(pairs, per_page):
             sheet_no += 1
             place_images_gutterfold_grid(
@@ -3201,8 +3169,9 @@ def generate_pdf(layout_key: str,
                     draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
             draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}")
             c.showPage()
-        c.save()
-        return
+        if save_at_end:
+            c.save()
+        return sheet_no
 
     raise ValueError("Unknown layout_key")
 
@@ -3348,77 +3317,122 @@ def main():
     # -----------------------------
     quality_key = _map_quality_value(cfg.get("QUALITY", "")) if use_cfg else prompt_quality(args)
 
-    # Jetzt erst Paare suchen – der Ordner ist garantiert gesetzt
-    pairs = find_card_pairs(folder)
-    if not pairs:
-        # Kein erneutes Nachfragen: Fehlermeldung zeigen und dann per Enter beenden.
+    # ----------------------------------------------------------
+    # 5b) Karten sammeln (ROOT + Unterordner), aber Format pro Ordner erlauben
+    # - ROOT-Config (UI/pdfConfig.txt) gilt global
+    # - In Unterordnern wird NUR CARD_FORMAT aus pdfConfig.txt gelesen
+    # - ROOT-Dateien werden zuerst verarbeitet
+    # - Dateinamen werden deterministisch (alphanumerisch) verarbeitet
+    # - CardBack-Regel:
+    #   * Root-CardBack gilt NUR für Karten im Startformat (UI/ROOT-pdfConfig)
+    #   * Für andere Formate wird pro Unterordner nach CardBack gesucht
+    # ----------------------------------------------------------
+    start_fmt_id = int(fmt.get('id', 1))
+
+    # Root-CardBack einmalig suchen
+    shared_back_root = find_named_image_in_folder(folder, CARDBACK_BASENAME)
+
+    folder_entries: List[Tuple[Path, int, List[Tuple[str, Optional[Path], Optional[Path]]]]] = []
+    for sub in iter_folders_dfs(folder):
+        fmt_id = start_fmt_id
+        if sub != folder:
+            fmt_id = read_card_format_override_only(sub / PDF_CONFIG_NAME_DEFAULT, default_id=start_fmt_id)
+
+        try:
+            pairs_here = find_card_pairs(sub)
+        except Exception:
+            pairs_here = []
+
+        if not pairs_here:
+            continue
+
+        # CardBack je Ordner/Format anwenden
+        # Reihenfolge:
+        # 1) zuerst im eigenen Ordner nach einem CardBack suchen
+        # 2) falls nicht vorhanden: Root-CardBack NUR verwenden, wenn das Format (fmt_id)
+        #    dem Root/UI-Format (start_fmt_id) entspricht
+        cb = find_named_image_in_folder(sub, CARDBACK_BASENAME)
+        if (cb is None) and (int(fmt_id) == int(start_fmt_id)):
+            cb = shared_back_root
+
+        if cb:
+            patched_pairs = []
+            for (base, a, b) in pairs_here:
+                if (b is None) or (not b.exists()):
+                    patched_pairs.append((base, a, cb))
+                else:
+                    patched_pairs.append((base, a, b))
+            pairs_here = patched_pairs
+
+        folder_entries.append((sub, int(fmt_id), pairs_here))
+
+    all_pairs = [p for (_sub, _fid, plist) in folder_entries for p in plist]
+    if not all_pairs:
         msg = _build_no_cards_message(folder)
         _show_panel(msg, title=t("no_cards_title"), border_style="red")
         pause_before_exit(t("exit_press_enter"), print_message=True)
         return
 
-    # -----------------------------
-    # 6) Rückseiten-Handling, Analyse, Bleed-Checks
-    #    (deine bestehende Logik – unverändert übernommen)
-    # -----------------------------
-    include_back_pages = True
-    missing_backs = [base for (base, a, b) in pairs if not (b and b.exists())]
-    has_any_back  = len(missing_backs) < len(pairs)
+    pairs_by_format: Dict[int, List[Tuple[str, Optional[Path], Optional[Path]]]] = {}
+    for _sub, fid, plist in folder_entries:
+        pairs_by_format.setdefault(int(fid), []).extend(plist)
 
-    if not has_any_back:
-        shared_back = find_named_image_in_folder(folder, CARDBACK_BASENAME)
-        if shared_back:
-            print(t('using_cardback', file=shared_back.name))
-            pairs = [(base, a, shared_back) for (base, a, _b) in pairs]
-            missing_backs = []
-            has_any_back = True
-        else:
-            include_back_pages = False
-            if any(k.lower() == "gutterfold" for k in layout_keys):
-                layout_keys = [k for k in layout_keys if k.lower() != "gutterfold"]
-                print(t('skip_gutterfold_no_backs', name=CARDBACK_BASENAME))
+    fmt_order = [start_fmt_id] + [i for i in range(1, 7) if i != start_fmt_id]
+    fmt_present = [fid for fid in fmt_order if fid in pairs_by_format]
 
-    if missing_backs and any(k.lower() == "gutterfold" for k in layout_keys):
-        missing_front_files = []
-        for (base, a, b) in pairs:
-            if not (b and b.exists()):
-                missing_front_files.append(a.name if (a and a.exists()) else str(base))
-        missing_sorted = sorted(missing_front_files, key=lambda s: s.lower())
-        if len(missing_sorted) > 30:
-            shown = ', '.join(missing_sorted[:30]) + f" ... (+{len(missing_sorted)-30})"
-        else:
-            shown = ', '.join(missing_sorted)
-        print(t('skip_gutterfold_missing_backs', missing=shown))
-        layout_keys = [k for k in layout_keys if k.lower() != "gutterfold"]
+    # ----------------------------------------------------------
+    # 6) Layout-Fähigkeiten über ALLE Formate hinweg bestimmen
+    #    (nur Layouts, die für ALLE Ordner/Formate funktionieren)
+    # ----------------------------------------------------------
+    requested_bleed = any(k.lower() in ("bleed", "2x3", "2x5") for k in layout_keys)
+    requested_gutter = any(k.lower() == "gutterfold" for k in layout_keys)
 
-    # Bildanalyse / Eligibility für Bleed-Layouts
-    sizes, too_small, too_small_bleed, pairs_for_2x3, skipped_2x3 = analyze_card_images(pairs)
+    fmt_state: Dict[int, Dict[str, object]] = {}
+    bleed_ok_all = True
+    gutter_ok_all = True
 
-    if too_small:
-        names = sorted({p.name for p in too_small})
-        msg = t('warn_too_small_upscale', minw=INNER_W_PX, minh=INNER_H_PX, count=len(names), files=', '.join(names))
-        if rprint:
-            rprint(Panel(msg, title="Warnung: Upscaling", border_style="yellow"))
-        else:
-            print(msg)
+    for fid in fmt_present:
+        fmt_dict = _fmt_by_id(fid)
+        apply_card_format(fmt_dict)
+        pairs_f = list(pairs_by_format.get(fid, []))
 
-    requested_bleed_any = any(k.lower() in ("bleed", "2x3", "2x5") for k in layout_keys)
-    if requested_bleed_any and too_small_bleed:
-        names = sorted({p.name for p in too_small_bleed})
-        shown = ', '.join(names[:30]) + (f" ... (+{len(names)-30})" if len(names) > 30 else "")
-        msg = t("skip_bleed_due_to_small", minw=BLEED_W_PX, minh=BLEED_H_PX, count=len(names), files=shown)
-        print(msg)
+        include_back_pages_f = any((b and b.exists()) for (_base, _a, b) in pairs_f)
+        has_missing_for_gutter = any(not (b and b.exists()) for (_base, _a, b) in pairs_f)
+        if requested_gutter and (not include_back_pages_f or has_missing_for_gutter):
+            gutter_ok_all = False
+
+        sizes, too_small, too_small_bleed, pairs_for_bleed, _skipped = analyze_card_images(pairs_f)
+        if too_small:
+            names = sorted({p.name for p in too_small})
+            shown = ', '.join(names[:30]) + (f" ... (+{len(names)-30})" if len(names) > 30 else "")
+            msg = t('warn_too_small_upscale', minw=INNER_W_PX, minh=INNER_H_PX, count=len(names), files=shown)
+            try:
+                if rprint and Panel:
+                    rprint(Panel(msg, title=f"Warnung ({fmt_dict.get('name','Format')})", border_style="yellow"))
+                else:
+                    print(msg)
+            except Exception:
+                print(msg)
+
+        all_have_bleed_f = bool(pairs_for_bleed) and (len(pairs_for_bleed) == len(pairs_f)) and (not too_small_bleed)
+        if requested_bleed and not all_have_bleed_f:
+            bleed_ok_all = False
+
+        fmt_state[fid] = {
+            'fmt': fmt_dict,
+            'pairs': pairs_f,
+            'pairs_bleed': pairs_for_bleed if all_have_bleed_f else [],
+            'include_back_pages': include_back_pages_f,
+            'all_have_bleed': all_have_bleed_f,
+        }
+
+    if requested_bleed and not bleed_ok_all:
         layout_keys = [k for k in layout_keys if k.lower() not in ("bleed", "2x3", "2x5")]
+        print(t('skip_2x3', minw=BLEED_W_PX, minh=BLEED_H_PX))
 
-    requested_2x3 = any(k.lower() == "2x3" for k in layout_keys)
-    requested_2x5 = any(k.lower() == "2x5" for k in layout_keys)
-    if (requested_2x3 or requested_2x5) and (not pairs_for_2x3 or len(pairs_for_2x3) != len(pairs)):
-        if requested_2x3:
-            layout_keys = [k for k in layout_keys if k.lower() != "2x3"]
-            print(t('skip_2x3', minw=BLEED_W_PX, minh=BLEED_H_PX))
-        if requested_2x5:
-            layout_keys = [k for k in layout_keys if k.lower() != "2x5"]
-            print(t('skip_2x5', minw=BLEED_W_PX, minh=BLEED_H_PX))
+    if requested_gutter and not gutter_ok_all:
+        layout_keys = [k for k in layout_keys if k.lower() != "gutterfold"]
+        print(t('skip_gutterfold_missing_backs', missing="…"))
 
     if not layout_keys:
         pause_before_exit()
@@ -3501,64 +3515,106 @@ def main():
     
     # -----------------------------
     # 9) Warm-Up (optional, beschleunigt das spätere Zeichnen)
+    #    (gemischte Formate: pro Format vorwärmen)
     # -----------------------------
-    if "standard" in [k.lower() for k in layout_keys]:
-        all_imgs_std = _collect_all_images_for("standard", pairs)
-        warmup_preprocessing(all_imgs_std, quality_key, (POKER_W_PT/72.0, POKER_H_PT/72.0), crop_bleed=True)
-
-    if any(k.lower() in ("bleed", "2x3", "2x5") for k in layout_keys):
-        all_imgs_bleed = _collect_all_images_for("bleed", pairs)
-        warmup_preprocessing(all_imgs_bleed, quality_key, get_bleed_box_inches(), crop_bleed=False)
+    try:
+        do_standard = any(k.lower() in ("standard", "3x3", "3x4") for k in layout_keys)
+        do_bleed = any(k.lower() in ("bleed", "2x3", "2x5") for k in layout_keys)
+        for fid in fmt_present:
+            st = fmt_state.get(fid, {})
+            fmt_dict = st.get('fmt') if isinstance(st, dict) else None
+            if not isinstance(fmt_dict, dict):
+                continue
+            apply_card_format(fmt_dict)
+            pairs_f = st.get('pairs') if isinstance(st, dict) else None
+            if not isinstance(pairs_f, list) or not pairs_f:
+                continue
+            if do_standard:
+                imgs = _collect_all_images_for("standard", pairs_f)
+                warmup_preprocessing(imgs, quality_key, (POKER_W_PT/72.0, POKER_H_PT/72.0), crop_bleed=True)
+            if do_bleed and bool(st.get('all_have_bleed', False)):
+                imgs = _collect_all_images_for("bleed", pairs_f)
+                warmup_preprocessing(imgs, quality_key, get_bleed_box_inches(), crop_bleed=False)
+    except Exception:
+        pass
 
     # -----------------------------
-    # 10) PDF-Erzeugung (wie bisher)
+    # 10) PDF-Erzeugung (gemischte Formate: Formate nacheinander, Seitenzahlen fortlaufend)
+    #     Es bleibt bei: je Layout/Paper eine eigene Datei.
     # -----------------------------
-    all_have_bleed = (pairs_for_2x3 and len(pairs_for_2x3) == len(pairs))
-
     for layout_key in layout_keys:
-        # Paare je nach Modus
-        if layout_key in ("bleed", "2x3", "2x5"):
-            pairs_layout = pairs_for_2x3
-        else:
-            pairs_layout = pairs
+        lk_norm = layout_key.strip().lower()
+        if lk_norm in ("3x3", "3x4"):
+            lk_norm = "standard"
+        if lk_norm in ("2x3", "2x5"):
+            lk_norm = "bleed"
 
         for base_pagesize, suffix in size_modes:
-            # Orientierung
-            if layout_key in ("gutterfold",):
+            if lk_norm == "gutterfold":
                 pagesize_tuple = choose_gutterfold_orientation(base_pagesize)
-            elif layout_key in ("bleed", "2x3", "2x5"):
+            elif lk_norm == "bleed":
                 pagesize_tuple = landscape(base_pagesize)
             else:
                 pagesize_tuple = base_pagesize
 
-            # Suffix/Outer-bleed pro Layout
-            if layout_key in ("standard", "3x3", "3x4"):
+            if lk_norm == "standard":
                 layout_suffix = "_standard"
-                outer_keep = OUTER_BLEED_KEEP_PX
-            elif layout_key in ("bleed", "2x3", "2x5"):
+            elif lk_norm == "bleed":
                 layout_suffix = "_bleed"
-                outer_keep = 0
             else:
                 layout_suffix = "_gutterfold"
-                outer_keep = OUTER_BLEED_KEEP_PX if all_have_bleed else 0
-               
-            # Ausgabepfad: Immer in den Generierungs-Unterordner schreiben
-            # Wunsch: erst Papierformat, dann Layout  ? {out_base}{suffix}{layout_suffix}.pdf
+
             out_path = (generation_dir / f"{out_base}{suffix}{layout_suffix}.pdf").resolve()
-            
-            # Erzeugung
-            generate_pdf(
-                layout_key=layout_key,
-                out_path=out_path,
-                pagesize_tuple=pagesize_tuple,
-                pairs=pairs_layout,
-                logo_path=logo_path,
-                copyright_name=copyright_name,
-                version_str=version_str,
-                quality_key=quality_key,
-                outer_bleed_keep_px=outer_keep,
-                rulebook_images=rulebook_images
-            )
+
+            c = create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
+            rb_mode = "landscape_pref" if lk_norm in ("bleed", "gutterfold") else "portrait_pref"
+            draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode=rb_mode, force_mode=RULEBOOK_ROTATE_MODE)
+
+            sheet_no = 0
+            for fid in fmt_present:
+                st = fmt_state.get(fid, {})
+                fmt_dict = st.get('fmt') if isinstance(st, dict) else None
+                if not isinstance(fmt_dict, dict):
+                    continue
+                apply_card_format(fmt_dict)
+
+                include_back_pages_f = bool(st.get('include_back_pages', True))
+                all_have_bleed_f = bool(st.get('all_have_bleed', False))
+
+                if lk_norm == "bleed":
+                    pairs_f = st.get('pairs_bleed')
+                else:
+                    pairs_f = st.get('pairs')
+
+                if not isinstance(pairs_f, list) or not pairs_f:
+                    continue
+
+                if lk_norm == "standard":
+                    outer_keep = OUTER_BLEED_KEEP_PX
+                elif lk_norm == "bleed":
+                    outer_keep = 0
+                else:
+                    outer_keep = OUTER_BLEED_KEEP_PX if all_have_bleed_f else 0
+
+                sheet_no = generate_pdf(
+                    layout_key=lk_norm,
+                    out_path=out_path,
+                    pagesize_tuple=pagesize_tuple,
+                    pairs=pairs_f,
+                    logo_path=logo_path,
+                    copyright_name=copyright_name,
+                    version_str=version_str,
+                    quality_key=quality_key,
+                    include_back_pages=include_back_pages_f,
+                    outer_bleed_keep_px=outer_keep,
+                    rulebook_images=[],
+                    existing_canvas=c,
+                    start_sheet_no=sheet_no,
+                    draw_rulebook=False,
+                    save_at_end=False
+                )
+
+            c.save()
             print(t("done", path=out_path))
 
 if __name__ == "__main__":
