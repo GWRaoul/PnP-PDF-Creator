@@ -111,7 +111,7 @@ _PAUSE_ALREADY_SHOWN = False
 # =========================================================
 # Script version / debug
 # =========================================================
-SCRIPT_VERSION = 'V1.4-2026-03-09'
+SCRIPT_VERSION = 'V1.5-2026-06-11'
 DEBUG_PREPROCESS = False  # set True to print per-image crop/resize diagnostics
 
 # =========================================================
@@ -271,9 +271,24 @@ COPY_MAX_CHARS = 150
 CUTMARK_LEN_PT_STD = 5.0
 CUTMARK_LINE_PT_STD = 1.0
 
+# Standardbleed cut marks (standard defaults; overridable via INI [cutmarks])
+CUTMARK_LEN_PT_SB = CUTMARK_LEN_PT_STD
+CUTMARK_LINE_PT_SB = CUTMARK_LINE_PT_STD
+
+# Gutterfold cut marks (standard defaults; overridable via INI [cutmarks])
+CUTMARK_LEN_PT_GF = CUTMARK_LEN_PT_STD
+CUTMARK_LINE_PT_GF = CUTMARK_LINE_PT_STD
+# Gutterbleed cut marks (standard defaults; overridable via INI [cutmarks])
+CUTMARK_LEN_PT_GB = CUTMARK_LEN_PT_STD
+CUTMARK_LINE_PT_GB = CUTMARK_LINE_PT_STD
+
 # 2x3 marks (outer only, cut to poker area inside bleed image)
 CUTMARK_LEN_PT_BLEED = 20.0
 CUTMARK_LINE_PT_BLEED = 1.0
+
+# Cutmark visibility on duplex layouts (Standard/Bleed): front | back | both
+CUTMARKS_VISIBLE = 'both'
+
 # 2x3 card image geometry (pixels of the source image)
 BLEED_W_PX = 825
 BLEED_H_PX = 1125
@@ -293,12 +308,17 @@ OUTER_BLEED_KEEP_PX = 15
 # Gutterfold layout config (NEW: 2 rows x 4 cols, horizontal fold)
 # =========================================================
 
-GF_FOLD_GUTTER_PT = 12.0   # Abstand zwischen oberer und unterer Reihe (Falzbereich)
+GF_FOLD_GUTTER_PT = 36.0   # Abstand zwischen oberer und unterer Reihe (Falzbereich)
 GF_COL_GAP_PT = 0.0        # <-- BÜNDIG (keine Lücke zwischen Spalten)
 
 GF_DRAW_FOLD_LINE = True
 GF_FOLD_LINE_WIDTH = 0.8
 GF_FOLD_LINE_DASH = (3, 3)
+
+# =========================================================
+# Auto Bleed Extension (INI-controlled)
+# =========================================================
+AUTO_BLEED_EXTENSION = True
 
 # Placement of page number and version number
 LEFT_MARGIN = 20.0 # Version number
@@ -494,8 +514,16 @@ def ensure_cutmark_defaults(cp: configparser.ConfigParser) -> bool:
     defaults = {
         'length_pt_standard': str(CUTMARK_LEN_PT_STD),
         'width_pt_standard': str(CUTMARK_LINE_PT_STD),
+        'length_pt_standardbleed': str(CUTMARK_LEN_PT_SB),
+        'width_pt_standardbleed': str(CUTMARK_LINE_PT_SB),
+        'outer_bleed_keep_px': str(OUTER_BLEED_KEEP_PX),    
+        'length_pt_gutterfold': str(CUTMARK_LEN_PT_GF),
+        'width_pt_gutterfold': str(CUTMARK_LINE_PT_GF),
+        'length_pt_gutterbleed': str(CUTMARK_LEN_PT_GB),
+        'width_pt_gutterbleed': str(CUTMARK_LINE_PT_GB),
         'length_pt_bleed': str(CUTMARK_LEN_PT_BLEED),
         'width_pt_bleed': str(CUTMARK_LINE_PT_BLEED),
+        'cutmark_color': '#000000',
     }
     for k, v in defaults.items():
         if not cp.has_option('cutmarks', k):
@@ -503,22 +531,48 @@ def ensure_cutmark_defaults(cp: configparser.ConfigParser) -> bool:
             changed = True
     return changed
 
-def ensure_standard_and_gutterfold_defaults(cp: configparser.ConfigParser) -> bool:
+def ensure_bleed_defaults(cp: configparser.ConfigParser) -> bool:
     """
-    Stellt sicher, dass die Sektion [standard_and_gutterfold]
-    existiert und den Parameter outer_bleed_keep_px enthält.
+    Ensures [bleed] section exists with auto_bleed_extension flag.
+    No migration from old INIs is performed on purpose.
     """
     changed = False
-
-    if not cp.has_section("standard_and_gutterfold"):
-        cp.add_section("standard_and_gutterfold")
+    if not cp.has_section("bleed"):
+        cp.add_section("bleed")
         changed = True
 
-    if not cp.has_option("standard_and_gutterfold", "outer_bleed_keep_px"):
-        cp.set("standard_and_gutterfold", "outer_bleed_keep_px", str(OUTER_BLEED_KEEP_PX))
+    if not cp.has_option("bleed", "auto_bleed_extension"):
+        cp.set("bleed", "auto_bleed_extension", "true")
         changed = True
-
+        
+    # NOTE: OUTER_BLEED_KEEP_PX is used for Standard + Gutterfold "outer bleed keep".
+    # We keep it in [bleed] as requested (no migration).
+    if not cp.has_option("bleed", "outer_bleed_keep_px"):
+        cp.set("bleed", "outer_bleed_keep_px", str(OUTER_BLEED_KEEP_PX))
+        changed = True
     return changed
+
+def _get_bool(cp, section, option, fallback=True) -> bool:
+    try:
+        return cp.getboolean(section, option, fallback=fallback)
+    except Exception:
+        return fallback
+    
+def ensure_gutterfold_defaults(cp: configparser.ConfigParser) -> bool:
+    """Ensure [gutterfold] section exists with default gutter width in points."""
+    changed = False
+    if not cp.has_section('gutterfold'):
+        cp.add_section('gutterfold')
+        changed = True
+    if not cp.has_option('gutterfold', 'gutter_width_pt'):
+        cp.set('gutterfold', 'gutter_width_pt', str(GF_FOLD_GUTTER_PT))
+        changed = True
+    return changed
+
+def load_gutterfold_from_config(cp: configparser.ConfigParser) -> None:
+    """Load gutterfold settings from INI into global variables."""
+    global GF_FOLD_GUTTER_PT
+    GF_FOLD_GUTTER_PT = _get_nonnegative_float(cp, 'gutterfold', 'gutter_width_pt', GF_FOLD_GUTTER_PT)
 
 def ensure_custom_format_defaults(cp: configparser.ConfigParser) -> bool:
     """
@@ -628,35 +682,65 @@ def load_assets_from_config(cp: configparser.ConfigParser) -> None:
 
 def load_cutmarks_from_config(cp: configparser.ConfigParser) -> None:
     # Load cutmark settings from INI into the global variables.
-    global CUTMARK_LEN_PT_STD, CUTMARK_LINE_PT_STD, CUTMARK_LEN_PT_BLEED, CUTMARK_LINE_PT_BLEED, CUTMARK_COLOR, OUTER_BLEED_KEEP_PX
+    global CUTMARK_LEN_PT_STD, CUTMARK_LINE_PT_STD
+    global CUTMARK_LEN_PT_SB, CUTMARK_LINE_PT_SB
+    global CUTMARK_LEN_PT_GF, CUTMARK_LINE_PT_GF
+    global CUTMARK_LEN_PT_GB, CUTMARK_LINE_PT_GB
+    global CUTMARK_LEN_PT_BLEED, CUTMARK_LINE_PT_BLEED
+    global CUTMARK_COLOR, OUTER_BLEED_KEEP_PX
+    global CUTMARKS_VISIBLE
     CUTMARK_LEN_PT_STD = _get_nonnegative_float(cp, 'cutmarks', 'length_pt_standard', CUTMARK_LEN_PT_STD)
     CUTMARK_LINE_PT_STD = _get_nonnegative_float(cp, 'cutmarks', 'width_pt_standard', CUTMARK_LINE_PT_STD)
+    CUTMARK_LEN_PT_SB = _get_nonnegative_float(cp, 'cutmarks', 'length_pt_standardbleed', CUTMARK_LEN_PT_SB)
+    CUTMARK_LINE_PT_SB = _get_nonnegative_float(cp, 'cutmarks', 'width_pt_standardbleed', CUTMARK_LINE_PT_SB)
+    OUTER_BLEED_KEEP_PX = _get_outer_bleed_keep_px(cp, 'cutmarks', 'outer_bleed_keep_px', OUTER_BLEED_KEEP_PX)
+    CUTMARK_LEN_PT_GF = _get_nonnegative_float(cp, 'cutmarks', 'length_pt_gutterfold', CUTMARK_LEN_PT_GF)
+    CUTMARK_LINE_PT_GF = _get_nonnegative_float(cp, 'cutmarks', 'width_pt_gutterfold', CUTMARK_LINE_PT_GF)
     CUTMARK_LEN_PT_BLEED = _get_nonnegative_float(cp, 'cutmarks', 'length_pt_bleed', CUTMARK_LEN_PT_BLEED)
     CUTMARK_LINE_PT_BLEED = _get_nonnegative_float(cp, 'cutmarks', 'width_pt_bleed', CUTMARK_LINE_PT_BLEED)
     CUTMARK_COLOR = cp.get('cutmarks', 'cutmark_color', fallback='#000000').strip()
 
+    v = cp.get('cutmarks', 'cutmarks_visible', fallback='both').strip().lower()
+    if v not in ('front', 'back', 'both'):
+        v = 'both'
+    CUTMARKS_VISIBLE = v
+
 def save_lang_to_ini(lang: str) -> None:
+    ini_path = get_ini_path()
+    is_new_ini = not ini_path.exists()
     cp = load_config()
     if not cp.has_section('ui'):
         cp.add_section('ui')
     cp.set('ui', 'lang', lang)
     # Ensure cutmark defaults exist so users can edit them
     ensure_cutmark_defaults(cp)
+    # Only add cutmarks_visible on initial INI creation (no migration for existing INIs)
+    if is_new_ini and not cp.has_option('cutmarks', 'cutmarks_visible'):
+        cp.set('cutmarks', 'cutmarks_visible', 'both')
     # Ensure assets defaults exist so users can edit them
-    ensure_assets_defaults(cp)    
+    ensure_assets_defaults(cp)
+    # Ensure gutterfold defaults exist so users can edit them
+    ensure_gutterfold_defaults(cp)    
     # --- SAFETY: Stelle sicher, dass cutmark_color wirklich gesetzt ist ---
     if not cp.has_option('cutmarks', 'cutmark_color'):
         cp.set('cutmarks', 'cutmark_color', '#000000')
     write_config(cp)
 
 def prompt_language_if_needed():
+    ini_existed = get_ini_path().exists()
     global LANG
     cp = load_config()
     changed = ensure_cutmark_defaults(cp)
     changed = ensure_assets_defaults(cp) or changed
     changed = ensure_custom_format_defaults(cp) or changed
-    changed = ensure_standard_and_gutterfold_defaults(cp) or changed
+    changed = ensure_bleed_defaults(cp) or changed
     changed = ensure_backside_offset_defaults(cp) or changed
+    changed = ensure_gutterfold_defaults(cp) or changed
+
+    # Only for brand new INI files: add cutmarks_visible default (no migration for existing INIs)
+    if (not ini_existed) and (not cp.has_option('cutmarks', 'cutmarks_visible')):
+        cp.set('cutmarks', 'cutmarks_visible', 'both')
+        changed = True
     
     # Optional: gleich laden & an CARD_FORMATS anhängen (am Ende der Liste)
     fmt6 = load_custom_format_from_config(cp)
@@ -685,13 +769,23 @@ def prompt_language_if_needed():
 
     # Load cutmark settings into globals
     load_cutmarks_from_config(cp)
+    # Load gutterfold settings into globals
+    load_gutterfold_from_config(cp)
     # Load asset settings into globals
     load_assets_from_config(cp)
-    # Standard & Gutterfold Bleed aus neuer Sektion laden
+    # Bleed settings from [bleed]
+    global AUTO_BLEED_EXTENSION
+    AUTO_BLEED_EXTENSION = _get_bool(
+        cp,
+        "bleed",
+        "auto_bleed_extension",
+        True
+    )
+    # Outer bleed keep (used by Standard + Gutterfold)
     global OUTER_BLEED_KEEP_PX
     OUTER_BLEED_KEEP_PX = _get_outer_bleed_keep_px(
         cp,
-        "standard_and_gutterfold",
+        "bleed",
         "outer_bleed_keep_px",
         OUTER_BLEED_KEEP_PX
     )
@@ -712,7 +806,7 @@ I18N = {
         "header_welcome": "Willkommen",
         "no_cards_title": "Keine Karten gefunden",
         "invalid_layout": "Bitte eines der angebotenen Layouts eingeben.",
-        "format_info_note": "'Standard' verwendet Innenbilder ohne Beschnitt. 'Bleed' benötigt Bilder mit Beschnitt. 'Gutterfold' erstellt ein Falzlayout mit vorderer/hinterer Seite.",
+        "format_info_note": "'Standard' verwendet Innenbilder ohne Beschnitt. 'Bleed' benötigt Bilder mit Beschnitt. 'Gutterfold' erstellt ein Falzlayout mit vorderer/hinterer Seite. 'Gutterbleed' ist wie Gutterfold, aber mit Bleed auch zwischen den Karten.",
         "skip_2x5": "2x5 wird übersprungen: Kartenbilder haben keinen Bleed (mind. {minw}x{minh}) oder sind gemischt.",
         "format_info_header": "Ausgewähltes Kartenformat: {name} ({w} x {h} mm)",
         "format_info_sizes": "Erwartete Bildgrößen @300dpi: Innen {iw}x{ih} px, Bleed {bw}x{bh} px (Bleed = 1/8\" pro Seite)",
@@ -739,7 +833,8 @@ I18N = {
         "no_cards_examples": "Beispiele im Ordner: {files}{more}",
         "no_cards_no_images": "Keine Bilddateien (.png/.jpg/.jpeg) im Ordner gefunden.",
         "done": "Fertig! PDF erstellt: {path}",
-        "skip_2x3": "2x3 wird übersprungen: Kartenbilder haben keinen Bleed (mind. {minw}x{minh}) oder sind gemischt.",
+        "skip_2x3": "Bleed wird übersprungen: Kartenbilder haben keinen Bleed (mind. {minw}x{minh}) oder sind gemischt.",
+        "skip_standardbleed": "Standardbleed wird übersprungen: Kartenbilder haben keinen Bleed (mind. {minw}x{minh}) oder sind gemischt.",
         "skip_gutterfold_no_backs": "Gutterfold wird übersprungen: Keine Rückseiten gefunden und keine Datei mit dem Namen '{name}' im Kartenordner.",
         "using_cardback": "Keine Rückseiten gefunden – verwende '{file}' als gemeinsame Kartenrückseite für alle Karten.",
         "skip_gutterfold_missing_backs": "Gutterfold wird übersprungen: Nicht für alle Vorderseiten wurde eine Rückseite gefunden. Fehlende Rückseiten für: {missing}",
@@ -776,7 +871,7 @@ I18N = {
         "header_welcome": "Welcome",
         "no_cards_title": "No cards found",
         "invalid_layout": "Please enter one of the offered layouts.",
-        "format_info_note": "'Standard' uses inner images (no bleed). 'Bleed' requires bleed images. 'Gutterfold' produces a fold layout with matching front/back alignment.",
+        "format_info_note": "'Standard' uses inner images (no bleed). 'Bleed' requires bleed images. 'Gutterfold' produces a fold layout with matching front/back alignment. 'Gutterbleed' is like Gutterfold but keeps bleed between cards.",
         "skip_2x5": "Skipping 2x5: card images do not have bleed (min {minw}x{minh}) or are mixed.",
         "format_info_header": "Selected card format: {name} ({w} x {h} mm)",
         "format_info_sizes": "Expected image sizes @300dpi: inner {iw}x{ih} px, bleed {bw}x{bh} px (bleed = 1/8\" per side)",
@@ -803,7 +898,8 @@ I18N = {
         "no_cards_examples": "Examples found in folder: {files}{more}",
         "no_cards_no_images": "No image files (.png/.jpg/.jpeg) found in the folder.",
         "done": "Done! PDF created: {path}",
-        "skip_2x3": "Skipping 2x3: card images do not have bleed (min {minw}x{minh}) or are mixed.",
+        "skip_2x3": "Skipping Bleed: card images do not have bleed (min {minw}x{minh}) or are mixed.",
+        "skip_standardbleed": "Skipping Standardbleed: card images do not have bleed (min {minw}x{minh}) or are mixed.",
         "skip_gutterfold_no_backs": "Skipping Gutterfold: no backs found and no file named '{name}' in the card folder.",
         "using_cardback": "No backs found – using '{file}' as a shared card back for all cards.",
         "skip_gutterfold_missing_backs": "Skipping Gutterfold: not all fronts have a back. Missing backs for: {missing}",
@@ -840,7 +936,7 @@ I18N = {
         "header_welcome": "Bienvenue",
         "no_cards_title": "Aucune carte trouvée",
         "invalid_layout": "Veuillez saisir l’un des layouts proposés.",
-        "format_info_note": "'Standard' utilise des images internes sans fond perdu. 'Bleed' nécessite des images avec fond perdu. 'Gutterfold' crée une mise en page pliée avec alignement recto/verso.",
+        "format_info_note": "'Standard' utilise des images internes sans fond perdu. 'Bleed' nécessite des images avec fond perdu. 'Gutterfold' crée une mise en page pliée avec alignement recto/verso. 'Gutterbleed' est comme Gutterfold mais conserve du fond perdu entre les cartes.",
         "skip_2x5": "2x5 ignoré : les images n’ont pas de fond perdu (min {minw}x{minh}) ou sont mélangées.",
         "format_info_header": "Format de carte sélectionné : {name} ({w} x {h} mm)",
         "format_info_sizes": "Tailles d'image attendues @300dpi : intérieur {iw}x{ih} px, fond perdu {bw}x{bh} px (fond perdu = 1/8\" par côté)",
@@ -867,7 +963,8 @@ I18N = {
         "no_cards_examples": "Exemples dans le dossier : {files}{more}",
         "no_cards_no_images": "Aucun fichier image (.png/.jpg/.jpeg) trouvé dans le dossier.",
         "done": "Terminé ! PDF créé : {path}",
-        "skip_2x3": "2x3 ignoré : les images n'ont pas de fond perdu (min {minw}x{minh}) ou sont mélangées.",
+        "skip_2x3": "Bleed ignoré : les images n'ont pas de fond perdu (min {minw}x{minh}) ou sont mélangées.",
+        "skip_standardbleed": "Standardbleed ignoré : les images n'ont pas de fond perdu (min {minw}x{minh}) ou sont mélangées.",
         "skip_gutterfold_no_backs": "Gutterfold ignoré : aucun verso trouvé et aucun fichier nommé '{name}' dans le dossier.",
         "using_cardback": "Aucun verso trouvé – utilisation de '{file}' comme verso commun pour toutes les cartes.",
         "skip_gutterfold_missing_backs": "Gutterfold ignoré : toutes les faces n'ont pas de verso. Versos manquants pour : {missing}",
@@ -904,7 +1001,7 @@ I18N = {
         "header_welcome": "Bienvenido",
         "no_cards_title": "No se encontraron cartas",
         "invalid_layout": "Introduzca uno de los layouts ofrecidos.",
-        "format_info_note": "'Standard' utiliza imágenes internas sin sangrado. 'Bleed' requiere imágenes con sangrado. 'Gutterfold' crea un diseño plegado con alineación anverso/reverso.",
+        "format_info_note": "'Standard' utiliza imágenes internas sin sangrado. 'Bleed' requiere imágenes con sangrado. 'Gutterfold' crea un diseño plegado con alineación anverso/reverso. 'Gutterbleed' es como Gutterfold pero conserva sangrado entre las cartas.",
         "skip_2x5": "Omitiendo 2x5: las imágenes no tienen sangrado (mín {minw}x{minh}) o están mezcladas.",
         "format_info_header": "Formato de carta seleccionado: {name} ({w} x {h} mm)",
         "format_info_sizes": "Tamaños de imagen esperados @300dpi: interior {iw}x{ih} px, sangrado {bw}x{bh} px (sangrado = 1/8\" por lado)",
@@ -931,7 +1028,8 @@ I18N = {
         "no_cards_examples": "Ejemplos en la carpeta: {files}{more}",
         "no_cards_no_images": "No se encontraron archivos de imagen (.png/.jpg/.jpeg) en la carpeta.",
         "done": "¡Listo! PDF creado: {path}",
-        "skip_2x3": "Omitiendo 2x3: las imágenes no tienen sangrado (mín {minw}x{minh}) o están mezcladas.",
+        "skip_2x3": "Omitiendo Bleed: las imágenes no tienen sangrado (mín {minw}x{minh}) o están mezcladas.",
+        "skip_standardbleed": "Omitiendo Standardbleed: las imágenes no tienen sangrado (mín {minw}x{minh}) o están mezcladas.",
         "skip_gutterfold_no_backs": "Se omite Gutterfold: no se encontraron reversos y no hay un archivo llamado '{name}' en la carpeta.",
         "using_cardback": "No se encontraron reversos: se usa '{file}' como reverso común para todas las cartas.",
         "skip_gutterfold_missing_backs": "Se omite Gutterfold: no todas las caras tienen reverso. Reversos faltantes para: {missing}",
@@ -968,7 +1066,7 @@ I18N = {
         "header_welcome": "Benvenuto",
         "no_cards_title": "Nessuna carta trovata",
         "invalid_layout": "Inserire uno dei layout proposti.",
-        "format_info_note": "'Standard' utilizza immagini interne senza abbondanza. 'Bleed' richiede immagini con abbondanza. 'Gutterfold' crea un layout piegato con allineamento fronte/retro.",
+        "format_info_note": "'Standard' utilizza immagini interne senza abbondanza. 'Bleed' richiede immagini con abbondanza. 'Gutterfold' crea un layout piegato con allineamento fronte/retro. 'Gutterbleed' è come Gutterfold ma mantiene abbondanza tra le carte.",
         "skip_2x5": "Salto 2x5: le immagini non hanno abbondanza (min {minw}x{minh}) o sono miste.",
         "format_info_header": "Formato carta selezionato: {name} ({w} x {h} mm)",
         "format_info_sizes": "Dimensioni immagine attese @300dpi: interno {iw}x{ih} px, abbondanza {bw}x{bh} px (abbondanza = 1/8\" per lato)",
@@ -995,7 +1093,8 @@ I18N = {
         "no_cards_examples": "Esempi nella cartella: {files}{more}",
         "no_cards_no_images": "Nessun file immagine (.png/.jpg/.jpeg) trovato nella cartella.",
         "done": "Fatto! PDF creato: {path}",
-        "skip_2x3": "Salto 2x3: le immagini non hanno abbondanza (min {minw}x{minh}) o sono miste.",
+        "skip_2x3": "Salto Bleed: le immagini non hanno abbondanza (min {minw}x{minh}) o sono miste.",
+        "skip_standardbleed": "Salto Standardbleed: le immagini non hanno abbondanza (min {minw}x{minh}) o sono miste.",
         "skip_gutterfold_no_backs": "Salto Gutterfold: nessun retro trovato e nessun file chiamato '{name}' nella cartella.",
         "using_cardback": "Nessun retro trovato – uso '{file}' come retro comune per tutte le carte.",
         "skip_gutterfold_missing_backs": "Salto Gutterfold: non tutte le fronti hanno un retro. Retro mancanti per: {missing}",
@@ -1055,7 +1154,7 @@ def write_pdf_config_template(dst: Path) -> None:
         "CARD_FORMAT=1",
         "",
         "# 2) LAYOUT:",
-        "#    Allowed values (case-insensitive): Standard | Bleed | Gutterfold | All",
+        "# Allowed values (case-insensitive): Standard | Standardbleed | Bleed | Gutterfold | Gutterbleed | All",
         "#    All = generates all supported layouts your images qualify for.",
         "LAYOUT=All",
         "",
@@ -1145,15 +1244,19 @@ def read_card_format_override_only(cfg_path: Path, default_id: int) -> int:
 def _map_layout_value(v: str) -> List[str]:
     s = (v or "").strip().lower()
     if s in ("", "all", "a"):
-        return ["standard", "bleed", "gutterfold"]
+        return ["standard", "standardbleed", "bleed", "gutterfold", "gutterbleed"]
+    if s in ("standardbleed", "sb"):
+        return ["standardbleed"]
     if s in ("standard", "s", "3x3", "3x4", "3"):
         return ["standard"]
     if s in ("bleed", "b", "2x3", "2x5", "2"):
         return ["bleed"]
     if s in ("gutterfold", "g", "gf"):
         return ["gutterfold"]
+    if s in ("gutterbleed", "gb"):
+        return ["gutterbleed"]
     # Fallback
-    return ["standard", "bleed", "gutterfold"]
+    return ["standard", "bleed", "gutterfold", "gutterbleed"]
 
 def _map_quality_value(v: str) -> str:
     s = (v or "").strip().lower()
@@ -1310,7 +1413,7 @@ def clear_tmp_cache():
         # If cache cannot be cleared, continue gracefully
         pass
 
-_CONVERT_CACHE: Dict[Tuple[str, str, str, str], Path] = {}
+_CONVERT_CACHE: Dict[Tuple[str, ...], Path] = {}
 
 def get_image_px_size(img_path: Path) -> Optional[Tuple[int, int]]:
     if Image is None:
@@ -1324,56 +1427,65 @@ def get_image_px_size(img_path: Path) -> Optional[Tuple[int, int]]:
 def target_pixels_for_box_inches(w_in: float, h_in: float, dpi: int) -> Tuple[int, int]:
     return int(round(w_in * dpi)), int(round(h_in * dpi))
 
-def preprocess_card_image_for_pdf(img_path: Path, quality_key: str, box_inches: Tuple[float, float], crop_bleed: bool = True) -> Path:
-    """ 
+def preprocess_card_image_for_pdf(
+    img_path: Path,
+    quality_key: str,
+    box_inches: Tuple[float, float],
+    crop_bleed: bool = True
+) -> Path:
+    """
     Preprocess a card image for embedding into PDF.
 
     Rules:
-    - crop_bleed=True  -> 3x3 + Gutterfold: ALWAYS end at INNER size 750x1050 (center-crop if needed)
-    - crop_bleed=False -> 2x3: keep BLEED canvas 825x1125 (center-crop if larger), ratio-fix only if needed
-
-    - lossless: save PNG
-    - high/medium/low: downsample to target pixel box (based on dpi) and save JPEG
+    - crop_bleed=True  -> Standard / Gutterfold:
+        Always end at INNER size (center-crop if needed).
+    - crop_bleed=False -> Bleed layouts:
+        Keep BLEED canvas if present.
+        If no real bleed is present and AUTO_BLEED_EXTENSION is enabled,
+        automatically extend the image to BLEED using edge-pixel replication.
     """
     preset = QUALITY_PRESETS.get(quality_key, QUALITY_PRESETS["high"])
     dpi = preset["dpi"]
     jpeg_q = preset["jpeg_quality"]
     w_in, h_in = box_inches
 
-    cache_key = (str(img_path.resolve()), quality_key, f"{w_in}x{h_in}", 'crop' if crop_bleed else 'nocrop')
+    cache_key = (
+        str(img_path.resolve()),
+        quality_key,
+        f"{w_in}x{h_in}",
+        "crop" if crop_bleed else "nocrop",
+        str(AUTO_BLEED_EXTENSION)
+    )
     cached = _CONVERT_CACHE.get(cache_key)
     if cached and cached.exists():
         return cached
 
-    # If PIL isn't available, just pass through (no cropping/resizing possible).
+    # Fallback if PIL is not available
     if Image is None:
         _CONVERT_CACHE[cache_key] = img_path
         return img_path
 
-    h = hashlib.md5((str(img_path.resolve()) + "\n" + quality_key + f"\n{w_in}x{h_in}").encode("utf-8")).hexdigest()
+    h = hashlib.md5(
+        (str(img_path.resolve()) + quality_key + f"{w_in}x{h_in}").encode("utf-8")
+    ).hexdigest()
     ext = ".png" if quality_key == "lossless" else ".jpg"
     out_file = TMP_DIR / f"{img_path.stem}_{quality_key}_{h}{ext}"
+
     if out_file.exists():
         _CONVERT_CACHE[cache_key] = out_file
         return out_file
 
-    def _center_crop_exact(im_, tw: int, th: int):
-        """Center-crop to exact (tw x th). Requires im_ to be at least that large."""
+    def _center_crop_exact(im_: Image.Image, tw: int, th: int) -> Image.Image:
         if im_.width == tw and im_.height == th:
             return im_
         left = (im_.width - tw) // 2
         top = (im_.height - th) // 2
         return im_.crop((left, top, left + tw, top + th))
 
-    def _dbg(msg: str):
-        if DEBUG_PREPROCESS:
-            print(msg)
-
     try:
         with Image.open(img_path) as im:
-            _dbg(f"[DEBUG] {img_path.name}: opened {im.width}x{im.height}, mode={im.mode}, crop_bleed={crop_bleed}, quality={quality_key}, dpi={dpi}")
 
-            # transparency -> white background
+            # Transparenz → Weiß
             if im.mode in ("RGBA", "LA") or ("transparency" in im.info):
                 base = Image.new("RGB", im.size, (255, 255, 255))
                 im_rgba = im.convert("RGBA")
@@ -1382,49 +1494,54 @@ def preprocess_card_image_for_pdf(img_path: Path, quality_key: str, box_inches: 
             else:
                 im = im.convert("RGB")
 
+            # =====================================================
+            # STANDARD / GUTTERFOLD (crop_bleed=True)
+            # =====================================================
             if crop_bleed:
-                # Target INNER (750x1050). NEVER aspect-crop to bleed ratio here.
-
+                # Entferne echtes Bleed, falls vorhanden
                 if im.width == BLEED_W_PX and im.height == BLEED_H_PX:
-                    # exact bleed canvas -> remove fixed borders
-                    im = im.crop((BLEED_LEFT_TOP_PX, BLEED_LEFT_TOP_PX,
-                                  im.width - BLEED_RIGHT_BOTTOM_PX,
-                                  im.height - BLEED_RIGHT_BOTTOM_PX))
-                    _dbg(f"[DEBUG]   after fixed-bleed-crop: {im.width}x{im.height}")
+                    im = im.crop((
+                        BLEED_LEFT_TOP_PX,
+                        BLEED_LEFT_TOP_PX,
+                        im.width - BLEED_RIGHT_BOTTOM_PX,
+                        im.height - BLEED_RIGHT_BOTTOM_PX
+                    ))
 
-                elif im.width >= BLEED_W_PX and im.height >= BLEED_H_PX:
-                    # larger-than-bleed exports -> proportional border crop, then enforce INNER
-                    left = int(round(im.width * (BLEED_LEFT_TOP_PX / BLEED_W_PX)))
-                    top = int(round(im.height * (BLEED_LEFT_TOP_PX / BLEED_H_PX)))
-                    right = im.width - int(round(im.width * (BLEED_RIGHT_BOTTOM_PX / BLEED_W_PX)))
-                    bottom = im.height - int(round(im.height * (BLEED_RIGHT_BOTTOM_PX / BLEED_H_PX)))
-                    im = im.crop((left, top, right, bottom))
-                    _dbg(f"[DEBUG]   after proportional-bleed-crop: {im.width}x{im.height}")
+                # Größer als INNER → zentriert beschneiden
+                if im.width >= INNER_W_PX and im.height >= INNER_H_PX:
+                    if im.width != INNER_W_PX or im.height != INNER_H_PX:
+                        im = _center_crop_exact(im, INNER_W_PX, INNER_H_PX)
 
-                # If we're still larger than INNER, center-crop to exact INNER.
-                if im.width >= INNER_W_PX and im.height >= INNER_H_PX and (im.width != INNER_W_PX or im.height != INNER_H_PX):
-                    im = _center_crop_exact(im, INNER_W_PX, INNER_H_PX)
-                    _dbg(f"[DEBUG]   after inner-enforce: {im.width}x{im.height}")
-
-                # If image is already exactly INNER, it stays unchanged.
-                # NEW: If image is smaller than INNER, upscale (stretch) to exact INNER size.
-                # This avoids aborting on small images and ensures consistent placement.
+                # Kleiner als INNER → hochskalieren
                 if im.width < INNER_W_PX or im.height < INNER_H_PX:
-                    im = im.resize((INNER_W_PX, INNER_H_PX), resample=Image.LANCZOS)
-                    _dbg(f"[DEBUG] after upscaling to INNER: {im.width}x{im.height}")
+                    im = im.resize(
+                        (INNER_W_PX, INNER_H_PX),
+                        resample=Image.LANCZOS
+                    )
 
-
+            # =====================================================
+            # BLEED-LAYOUTS (crop_bleed=False)
+            # =====================================================
             else:
-                # Target BLEED (825x1125). Keep bleed; ratio-fix only if necessary.
+                # --- AUTO BLEED EXTENSION ---
+                # Wenn kein echtes Bleed vorhanden ist, aber Feature aktiv
+                if (
+                    AUTO_BLEED_EXTENSION
+                    and im.width == INNER_W_PX
+                    and im.height == INNER_H_PX
+                ):
+                    im = extend_image_to_bleed(im)
 
-                if im.width >= BLEED_W_PX and im.height >= BLEED_H_PX and (im.width != BLEED_W_PX or im.height != BLEED_H_PX):
-                    im = _center_crop_exact(im, BLEED_W_PX, BLEED_H_PX)
-                    _dbg(f"[DEBUG]   after bleed-enforce: {im.width}x{im.height}")
+                # Auf exaktes BLEED-Maß bringen
+                if im.width >= BLEED_W_PX and im.height >= BLEED_H_PX:
+                    if im.width != BLEED_W_PX or im.height != BLEED_H_PX:
+                        im = _center_crop_exact(im, BLEED_W_PX, BLEED_H_PX)
 
-                # If aspect ratio is off, center-crop to the bleed aspect ratio (11:15).
+                # Seitenverhältnis absichern (11:15)
                 if im.width * BLEED_H_PX != im.height * BLEED_W_PX:
                     target_ratio = BLEED_W_PX / BLEED_H_PX
                     current_ratio = im.width / im.height if im.height else target_ratio
+
                     if current_ratio > target_ratio:
                         new_w = int(round(im.height * target_ratio))
                         left = (im.width - new_w) // 2
@@ -1433,29 +1550,78 @@ def preprocess_card_image_for_pdf(img_path: Path, quality_key: str, box_inches: 
                         new_h = int(round(im.width / target_ratio))
                         top = (im.height - new_h) // 2
                         im = im.crop((0, top, im.width, top + new_h))
-                    _dbg(f"[DEBUG]   after ratio-fix (bleed): {im.width}x{im.height}")
 
+            # =====================================================
+            # SAVE
+            # =====================================================
             if quality_key == "lossless":
                 im.save(out_file, "PNG", optimize=True)
-                _CONVERT_CACHE[cache_key] = out_file
-                _dbg(f"[DEBUG]   saved lossless: {out_file.name} -> {im.width}x{im.height}")
-                return out_file
+            else:
+                target_w = int(round(w_in * dpi))
+                target_h = int(round(h_in * dpi))
+                if im.width > target_w or im.height > target_h:
+                    im.thumbnail((target_w, target_h), resample=Image.LANCZOS)
+                im.save(out_file, "JPEG", quality=jpeg_q, optimize=True)
 
-            target_w, target_h = target_pixels_for_box_inches(w_in, h_in, dpi)
-            _dbg(f"[DEBUG]   target pixels: {target_w}x{target_h}")
-            if im.width > target_w or im.height > target_h:
-                im.thumbnail((target_w, target_h), resample=Image.LANCZOS)
-                _dbg(f"[DEBUG]   after thumbnail: {im.width}x{im.height}")
-            im.save(out_file, "JPEG", quality=jpeg_q, optimize=True)
-            _dbg(f"[DEBUG]   saved jpeg: {out_file.name} -> {im.width}x{im.height}")
+            _CONVERT_CACHE[cache_key] = out_file
+            return out_file
 
-    except Exception as e:
+    except Exception:
         _CONVERT_CACHE[cache_key] = img_path
-        _dbg(f"[DEBUG]   ERROR preprocessing {img_path.name}: {e}")
         return img_path
 
-    _CONVERT_CACHE[cache_key] = out_file
-    return out_file
+# =========================================================
+# Auto Bleed Extension Helper
+# =========================================================
+def extend_image_to_bleed(im: Image.Image) -> Image.Image:
+    """
+    Extends an INNER-sized image to full BLEED size by replicating edge pixels.
+    """
+    if im.width != INNER_W_PX or im.height != INNER_H_PX:
+        return im
+
+    canvas = Image.new("RGB", (BLEED_W_PX, BLEED_H_PX))
+    canvas.paste(im, (BLEED_LEFT_TOP_PX, BLEED_LEFT_TOP_PX))
+
+    # Left / Right
+    left = im.crop((0, 0, 1, im.height)).resize((BLEED_LEFT_TOP_PX, im.height))
+    right = im.crop((im.width - 1, 0, im.width, im.height)) \
+             .resize((BLEED_RIGHT_BOTTOM_PX, im.height))
+
+    canvas.paste(left, (0, BLEED_LEFT_TOP_PX))
+    canvas.paste(right, (BLEED_LEFT_TOP_PX + INNER_W_PX, BLEED_LEFT_TOP_PX))
+
+    # Top / Bottom
+    top = im.crop((0, 0, im.width, 1)).resize((im.width, BLEED_LEFT_TOP_PX))
+    bottom = im.crop((0, im.height - 1, im.width, im.height)) \
+               .resize((im.width, BLEED_RIGHT_BOTTOM_PX))
+
+    canvas.paste(top, (BLEED_LEFT_TOP_PX, 0))
+    canvas.paste(bottom, (BLEED_LEFT_TOP_PX, BLEED_LEFT_TOP_PX + INNER_H_PX))
+
+    # Corners
+    canvas.paste(top.crop((0, 0, 1, 1))
+                 .resize((BLEED_LEFT_TOP_PX, BLEED_LEFT_TOP_PX)), (0, 0))
+    canvas.paste(top.crop((im.width - 1, 0, im.width, 1))
+                 .resize((BLEED_RIGHT_BOTTOM_PX, BLEED_LEFT_TOP_PX)),
+                 (BLEED_LEFT_TOP_PX + INNER_W_PX, 0))
+    canvas.paste(bottom.crop((0, 0, 1, 1))
+                 .resize((BLEED_LEFT_TOP_PX, BLEED_RIGHT_BOTTOM_PX)),
+                 (0, BLEED_LEFT_TOP_PX + INNER_H_PX))
+    canvas.paste(bottom.crop((im.width - 1, 0, im.width, 1))
+                 .resize((BLEED_RIGHT_BOTTOM_PX, BLEED_RIGHT_BOTTOM_PX)),
+                 (BLEED_LEFT_TOP_PX + INNER_W_PX, BLEED_LEFT_TOP_PX + INNER_H_PX))
+
+    return canvas
+
+# =========================================================
+# Helper: Determine if an image is "auto-bleed eligible"
+# =========================================================
+def _is_auto_bleed_eligible_size(sz: Optional[Tuple[int, int]]) -> bool:
+ try:
+  return bool(sz and AUTO_BLEED_EXTENSION and int(sz[0]) == int(INNER_W_PX) and int(sz[1]) == int(INNER_H_PX))
+ except Exception:
+  return False
 
 # =========================================================
 # NEU: Teil-Bleed nur an ausgewählten Außenkanten stehen lassen
@@ -1472,8 +1638,11 @@ def preprocess_card_image_outer_bleed(
     """
     Erzeugt ein Bild, dessen Innenfläche exakt INNER_W/H_PX bleibt, aber an
     den angegebenen Außenkanten (links/rechts/oben/unten) einen dünnen Bleed
-    (z. B. 10 px) stehen lässt. Nur wenn das Quellbild echtes Bleed (>= 825x1125)
-    hat; sonst fällt die Funktion automatisch auf Innenmaß-only zurück.
+    (z. B. 10 px) stehen lässt.
+    - Hat die Quelle echtes Bleed (>= BLEED_W/H_PX): nutze dieses.
+    - Hat die Quelle kein Bleed, aber ist exakt INNER und AUTO_BLEED_EXTENSION=True:
+    erstelle ein Bleed-Canvas via edge-pixel replication und nutze das als Basis.
+    - Sonst: Fallback auf Innenmaß-only.
     Optionales rotieren (0/180) z. B. für Gutterfold-Rückseiten.
     """
     preset = QUALITY_PRESETS.get(quality_key, QUALITY_PRESETS["high"])
@@ -1510,6 +1679,12 @@ def preprocess_card_image_outer_bleed(
 
             has_bleed = (im.width >= BLEED_W_PX and im.height >= BLEED_H_PX)
 
+            # NEW: If no real bleed exists but image is INNER and auto extension is enabled,
+            # build a bleed canvas first (edge-pixel replication).
+            if (not has_bleed) and AUTO_BLEED_EXTENSION and (im.width == INNER_W_PX and im.height == INNER_H_PX):
+                im = extend_image_to_bleed(im)
+                has_bleed = True
+                
             if has_bleed:
                 # Auf exakte Bleed-Canvas zentriert bringen
                 if im.width != BLEED_W_PX or im.height != BLEED_H_PX:
@@ -1527,7 +1702,7 @@ def preprocess_card_image_outer_bleed(
 
                 # Zielgröße inkl. stehen gelassenem Bleed
                 target_w = INNER_W_PX + min(keep_left_px, BLEED_LEFT_TOP_PX) + min(keep_right_px, BLEED_RIGHT_BOTTOM_PX)
-                target_h = INNER_H_PX + min(keep_top_px,  BLEED_LEFT_TOP_PX) + min(keep_bottom_px, BLEED_RIGHT_BOTTOM_PX)
+                target_h = INNER_H_PX + min(keep_top_px, BLEED_LEFT_TOP_PX) + min(keep_bottom_px, BLEED_RIGHT_BOTTOM_PX)
 
                 # Falls größer -> zentriert auf Ziel beschneiden
                 if im.width > target_w or im.height > target_h:
@@ -1604,7 +1779,8 @@ def analyze_card_images(pairs: List[Tuple[str, Optional[Path], Optional[Path]]])
     - sizes: dict Path->(w,h)
     - too_small: list of Paths where w<INNER_W_PX or h<INNER_H_PX (inner/trim threshold)
     - too_small_bleed: list of Paths where w<BLEED_W_PX or h<BLEED_H_PX (bleed threshold)
-    - eligible_2x3_pairs: list of pairs where all existing sides are >= BLEED_W_PX x BLEED_H_PX
+        NOTE: If AUTO_BLEED_EXTENSION is enabled, exact INNER size counts as bleed-capable.
+    - eligible_2x3_pairs: list of pairs where all existing sides are bleed-capable (real bleed OR auto-bleed eligible)
     - skipped_2x3_count: how many pairs were excluded from 2x3
     If PIL is not available, returns (None, [], [], pairs, 0).
     """
@@ -1638,8 +1814,13 @@ def analyze_card_images(pairs: List[Tuple[str, Optional[Path], Optional[Path]]])
             if w < INNER_W_PX or h < INNER_H_PX:
                 too_small.append(p)
                 
+            # Bleed minimum check:
+            # - Real bleed: >= BLEED_W_PX x BLEED_H_PX
+            # - Auto bleed (if enabled): EXACT INNER size counts as bleed-capable
             if w < BLEED_W_PX or h < BLEED_H_PX:
-                too_small_bleed.append(p)
+                if not (AUTO_BLEED_EXTENSION and w == INNER_W_PX and h == INNER_H_PX):
+                    too_small_bleed.append(p)
+
         # 2x3 eligibility: all existing sides must have bleed dimensions
         ok_bleed = True
         for p in (a, b):
@@ -1647,8 +1828,11 @@ def analyze_card_images(pairs: List[Tuple[str, Optional[Path], Optional[Path]]])
                 continue
             w, h = get_size(p)
             if w < BLEED_W_PX or h < BLEED_H_PX:
+                # Auto bleed eligible images (exact INNER) are allowed if enabled
+                if AUTO_BLEED_EXTENSION and w == INNER_W_PX and h == INNER_H_PX:
+                    continue
                 ok_bleed = False
-                break
+                break                
         if ok_bleed:
             eligible.append((base, a, b))
         else:
@@ -1679,24 +1863,28 @@ def prompt_layout_dynamic(args=None) -> List[str]:
     if args and getattr(args, "layout", None):
         raw = args.layout.strip().lower()
         if raw in ("", "all", "a"):
-            return ["standard", "bleed", "gutterfold"]
+            return ["standard", "bleed", "gutterfold", "gutterbleed"]
         if raw in ("standard", "s", "3x3", "3x4", "3"):
             return ["standard"]
         if raw in ("bleed", "b", "2x3", "2x5", "2"):
             return ["bleed"]
         if raw in ("gutterfold", "g", "gf"):
             return ["gutterfold"]
+        if raw in ("gutterbleed", "gb"):
+            return ["gutterbleed"]
         print(t("invalid_layout"))
     # 2) Komfort: List-Prompt (falls questionary vorhanden)
     if questionary is not None:
         # Titel lokalisiert; Choices bleiben sprachneutral, da die Logik auf diese Keys mappt
-        q_title = t("choose_layout", opts="Standard/Bleed/Gutterfold/All")   
-        picked = _q_select(q_title, choices=["All", "Standard", "Bleed", "Gutterfold"], default="All")
+        q_title = t("choose_layout", opts="Standard/Bleed/Gutterfold/Gutterbleed/All")   
+        picked = _q_select(q_title, choices=["All", "Standard", "Standardbleed", "Bleed", "Gutterfold", "Gutterbleed"], default="All")
         mapping = {
-            "all": ["standard","bleed","gutterfold"],
+            "all": ["standard","standardbleed","bleed","gutterfold","gutterbleed"],
             "standard": ["standard"],
+            "standardbleed": ["standardbleed"],
             "bleed": ["bleed"],
             "gutterfold": ["gutterfold"],
+            "gutterbleed": ["gutterbleed"],
         }
         try:
             key = picked.strip().lower() if isinstance(picked, str) else "all"
@@ -1704,17 +1892,19 @@ def prompt_layout_dynamic(args=None) -> List[str]:
             key = "all"
         return mapping.get(key, mapping["all"])        
     # 3) Fallback: bisherige Freitext-Eingabe
-    opts_str = "Standard/Bleed/Gutterfold/All"
+    opts_str = "Standard/Bleed/Gutterfold/Gutterbleed/All"
     while True:
         raw = input(t("choose_layout", opts=opts_str)).strip().lower()
         if raw in ("", "all", "a"):
-            return ["standard", "bleed", "gutterfold"]
+            return ["standard", "bleed", "gutterfold", "gutterbleed"]
         if raw in ("standard", "s", "3x3", "3x4", "3"):
             return ["standard"]
         if raw in ("bleed", "b", "2x3", "2x5", "2"):
             return ["bleed"]
         if raw in ("gutterfold", "g", "gf"):
             return ["gutterfold"]
+        if raw in ("gutterbleed", "gb"):
+            return ["gutterbleed"]
         print(t("invalid_layout"))
 
 def prompt_pagesize_mode(args=None):
@@ -2146,7 +2336,7 @@ def parse_args():
     p = argparse.ArgumentParser(description="PnP PDF Creator (polished CLI)")
     p.add_argument("--lang", choices=["de","en","fr","es","it"], help="UI-Sprache")
     p.add_argument("--format", dest="card_format", help="Kartenformatname (z.B. 'Poker', 'Euro', ...)")
-    p.add_argument("--layout", choices=["standard","bleed","gutterfold","all"], help="Layoutwahl")
+    p.add_argument("--layout", choices=["standard","standardbleed","bleed","gutterfold","gutterbleed","all"], help="Layoutwahl")
     p.add_argument("--pagesize", choices=["A4","Letter","Both"], help="Papierformat")
     p.add_argument("--folder", type=str, help="Ordner mit Kartenbildern")
     p.add_argument("--logo", type=str, help="Pfad zu Logo-Datei (optional)")
@@ -2430,13 +2620,14 @@ def draw_gutter_bridge_marks(
     x_positions: List[float],
     y_gutter_bottom: float,
     y_gutter_top: float,
+    line_width: float = CUTMARK_LINE_PT_GF,
 ):
     """
     Draw vertical 'bridge' cut marks ONLY across the gutter area,
     i.e., from the top edge of the bottom row up to the bottom edge of the top row.
     """
     c.saveState()
-    c.setLineWidth(CUTMARK_LINE_PT_STD)
+    c.setLineWidth(line_width)
     c.setStrokeColor(CUTMARK_COLOR)
     for x in x_positions:
         c.line(x, y_gutter_bottom, x, y_gutter_top)
@@ -2446,9 +2637,36 @@ def cutmarks_enabled_standard() -> bool:
     """Standard/Gutterfold cut marks are enabled only if length AND line width are > 0."""
     return (CUTMARK_LEN_PT_STD > 0.0) and (CUTMARK_LINE_PT_STD > 0.0)
 
+def cutmarks_enabled_standardbleed() -> bool:
+    """Standardbleed cut marks are enabled only if length AND line width are > 0."""
+    return (CUTMARK_LEN_PT_SB > 0.0) and (CUTMARK_LINE_PT_SB > 0.0)
+
 def cutmarks_enabled_bleed() -> bool:
     """Bleed cut marks are enabled only if length AND line width are > 0."""
     return (CUTMARK_LEN_PT_BLEED > 0.0) and (CUTMARK_LINE_PT_BLEED > 0.0)
+
+def cutmarks_enabled_gutterfold() -> bool:
+    """Gutterfold cut marks are enabled only if length AND line width are > 0."""
+    return (CUTMARK_LEN_PT_GF > 0.0) and (CUTMARK_LINE_PT_GF > 0.0)
+
+
+def cutmarks_enabled_gutterbleed() -> bool:
+    """Gutterbleed cut marks are enabled only if length AND line width are > 0."""
+    return (CUTMARK_LEN_PT_GB > 0.0) and (CUTMARK_LINE_PT_GB > 0.0)
+
+
+def _cutmarks_visible_for_side(is_back: bool) -> bool:
+    """Return True if cutmarks should be drawn on this page side for duplex layouts.
+
+    cutmarks_visible values: front | back | both
+    """
+    v = (CUTMARKS_VISIBLE or 'both').strip().lower()
+    if v == 'front':
+        return not bool(is_back)
+    if v == 'back':
+        return bool(is_back)
+    # default / both / invalid
+    return True
 
 def draw_cutmarks_gutterfold(
     c: canvas.Canvas,
@@ -2456,12 +2674,14 @@ def draw_cutmarks_gutterfold(
     grid_w: float, grid_h: float,
     y_edges: List[float],
     x_marks: List[float],
+    line_width: float = None,
+    length_pt: float = None,
 ):
     """Outside-only crop marks (similar visual style to your 2x3 outer marks)."""
     c.saveState()
-    c.setLineWidth(CUTMARK_LINE_PT_STD)
+    c.setLineWidth(CUTMARK_LINE_PT_GF if line_width is None else line_width)
     c.setStrokeColor(CUTMARK_COLOR)
-    L = CUTMARK_LEN_PT_STD
+    L = CUTMARK_LEN_PT_GF if length_pt is None else length_pt
     x_left = x0
     x_right = x0 + grid_w
     y_bottom = y0
@@ -2532,6 +2752,58 @@ def draw_corner_marks_grid(c: canvas.Canvas, x0: float, y0: float, card_w: float
     for (x, y) in ((x_left, y_bottom), (x_right, y_bottom), (x_left, y_top), (x_right, y_top)):
         c.line(x - half, y, x + half, y)
         c.line(x, y - half, x, y + half)
+    c.restoreState()
+
+
+def draw_card_corner_crosses_standardbleed(
+    c: canvas.Canvas,
+    x0: float, y0: float,
+    card_w: float, card_h: float,
+    cols: int, rows: int,
+    gap_pt: float,
+    img_paths: Optional[List[Optional[Path]]] = None,
+):
+    """
+    Standardbleed cut marks: draw a small cross at every *trim* corner of every
+    placed card.
+
+    Why: In Standardbleed there is a gap between cards (gap_pt) so the trim lines
+    exist twice between neighboring cards (right edge of left card + left edge of
+    right card). Drawing per-card corners automatically produces the required
+    *two* crosses between cards and also includes the 4 outer sheet corners.
+
+    If img_paths is provided, marks are drawn only for occupied slots.
+    """
+    c.saveState()
+    c.setLineWidth(CUTMARK_LINE_PT_SB)
+    c.setStrokeColor(CUTMARK_COLOR)
+    half = CUTMARK_LEN_PT_SB / 2.0
+    pitch_x = card_w + max(0.0, gap_pt)
+    pitch_y = card_h + max(0.0, gap_pt)
+    per_page = cols * rows
+
+    def _slot_occupied(i: int) -> bool:
+        if img_paths is None:
+            return True
+        if i >= len(img_paths):
+            return False
+        p = img_paths[i]
+        try:
+            return bool(p and p.exists())
+        except Exception:
+            return False
+
+    for i in range(per_page):
+        if not _slot_occupied(i):
+            continue
+        row = i // cols
+        col = i % cols
+        x = x0 + col * pitch_x
+        y = y0 + (rows - 1 - row) * pitch_y
+        for (cx, cy) in ((x, y), (x + card_w, y), (x, y + card_h), (x + card_w, y + card_h)):
+            c.line(cx - half, cy, cx + half, cy)
+            c.line(cx, cy - half, cx, cy + half)
+
     c.restoreState()
 
 def _compute_enclosing_edges(img_paths, cols, rows, is_back=False):
@@ -2649,24 +2921,26 @@ def place_images_grid_inner(
         use_outer = outer_bleed_keep_px > 0 and (keep_left or keep_right or keep_top or keep_bottom)
 
         if use_outer:
-            # Nur wenn die Quelle echtes Bleed hat (>= BLEED_W/H_PX); sonst Fallback auf Innenmaß
+            processed = None
+            # NEW: allow outer bleed either with real bleed OR with auto-bleed-eligible INNER images
             sz = get_image_px_size(img_path)
-            has_bleed = bool(sz and sz[0] >= BLEED_W_PX and sz[1] >= BLEED_H_PX)
-            if has_bleed:
-                # Quelle so vorbereiten, dass die Innenfläche erhalten bleibt und außen nur an
-                # angegebenen Kanten ein dünner Bleed stehen bleibt.
+            has_real_bleed = bool(sz and sz[0] >= BLEED_W_PX and sz[1] >= BLEED_H_PX)
+            auto_ok = _is_auto_bleed_eligible_size(sz)
+            if has_real_bleed or auto_ok:
                 processed = preprocess_card_image_outer_bleed(
                     img_path, quality_key,
                     keep_left, keep_right, keep_top, keep_bottom,
                     rotate_degrees=0
                 )
-                # Gesamtgröße inkl. außenstehender Bleed-Pixel in Punkten
+            # If outer-bleed preprocessing still couldn't produce an expanded image, fallback to inner draw
+            psz = get_image_px_size(processed) if processed else None
+            expected_w = INNER_W_PX + min(keep_left, BLEED_LEFT_TOP_PX) + min(keep_right, BLEED_RIGHT_BOTTOM_PX)
+            expected_h = INNER_H_PX + min(keep_top, BLEED_LEFT_TOP_PX) + min(keep_bottom, BLEED_RIGHT_BOTTOM_PX)
+            if psz and int(psz[0]) == int(expected_w) and int(psz[1]) == int(expected_h):
                 total_w = s * (INNER_W_PX + keep_left + keep_right)
                 total_h = s * (INNER_H_PX + keep_top + keep_bottom)
-                # Bild so platzieren, dass die Innenfläche exakt in der Kartenbox liegt
                 dx = x - s * keep_left
                 dy = y - s * keep_bottom
-                # preserveAspectRatio=False, da wir die exakten Maße vorgeben
                 c.drawImage(
                     ImageReader(str(processed)),
                     dx, dy,
@@ -2674,7 +2948,6 @@ def place_images_grid_inner(
                     preserveAspectRatio=False, mask="auto"
                 )
             else:
-                # Fallback: Innenmaß
                 processed = preprocess_card_image_for_pdf(img_path, quality_key, card_box_inches)
                 draw_w, draw_h = fit_image_into_box(processed, card_w, card_h)
                 dx = x + (card_w - draw_w) / 2.0
@@ -2686,7 +2959,7 @@ def place_images_grid_inner(
                     preserveAspectRatio=True, mask="auto"
                 )
         else:
-            # Kein Außen-Bleed angefragt oder Karte liegt nicht außen → klassisch Innenmaß
+            # Not eligible -> inner fallback
             processed = preprocess_card_image_for_pdf(img_path, quality_key, card_box_inches)
             draw_w, draw_h = fit_image_into_box(processed, card_w, card_h)
             dx = x + (card_w - draw_w) / 2.0
@@ -2697,15 +2970,72 @@ def place_images_grid_inner(
                 width=draw_w, height=draw_h,
                 preserveAspectRatio=True, mask="auto"
             )
-
     # Marken nur zeichnen, wenn via INI aktiv (Länge und Linienbreite > 0)
-    if cutmarks_enabled_standard():
+    if cutmarks_enabled_standard() and _cutmarks_visible_for_side(is_back):
         draw_inner_crosses_grid(c, x0, y0, card_w, card_h, cols, rows)
         draw_outer_marks_grid(c, x0, y0, card_w, card_h, cols, rows)
         draw_corner_marks_grid(c, x0, y0, card_w, card_h, cols, rows)
 
+def place_images_standardbleed_grid(
+    c: canvas.Canvas,
+    img_paths: List[Optional[Path]],
+    x0: float, y0: float,
+    card_w: float, card_h: float,
+    cols: int, rows: int,
+    gap_pt: float,
+    is_back: bool,
+    quality_key: str,
+    card_box_inches: Tuple[float, float],
+    bleed_keep_px: int,
+):
+    """Standardbleed: Standard-Layout mit Bleed zwischen Karten und inneren Kreuzmarken."""
+    per_page = cols * rows
+    keep = int(max(0, bleed_keep_px))
+    for idx in range(per_page):
+        img_path = img_paths[idx] if idx < len(img_paths) else None
+        row = idx // cols
+        col = idx % cols
+        if is_back:
+            col = (cols - 1) - col
+        x = x0 + col * (card_w + gap_pt)
+        y = y0 + (rows - 1 - row) * (card_h + gap_pt)
+        if img_path is None or (not img_path.exists()):
+            continue
+        processed = preprocess_card_image_outer_bleed(
+            img_path,
+            quality_key,
+            keep, keep, keep, keep,
+            rotate_degrees=0,
+        )
+        psz = get_image_px_size(processed)
+        expected_w = INNER_W_PX + min(keep, BLEED_LEFT_TOP_PX) + min(keep, BLEED_RIGHT_BOTTOM_PX)
+        expected_h = INNER_H_PX + min(keep, BLEED_LEFT_TOP_PX) + min(keep, BLEED_RIGHT_BOTTOM_PX)
+        if psz and int(psz[0]) == int(expected_w) and int(psz[1]) == int(expected_h):
+            draw_card_outer_bleed(c, processed, x, y, card_w, card_h, keep, keep, keep, keep)
+        else:
+            processed2 = preprocess_card_image_for_pdf(img_path, quality_key, card_box_inches)
+            draw_w, draw_h = fit_image_into_box(processed2, card_w, card_h)
+            dx = x + (card_w - draw_w) / 2.0
+            dy = y + (card_h - draw_h) / 2.0
+            c.drawImage(
+                ImageReader(str(processed2)),
+                dx, dy,
+                width=draw_w, height=draw_h,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+    # Cut marks for Standardbleed: per-card trim corners (double marks between cards)
+    if cutmarks_enabled_standardbleed() and _cutmarks_visible_for_side(is_back):
+        draw_card_corner_crosses_standardbleed(
+            c, x0, y0,
+            card_w, card_h,
+            cols, rows,
+            gap_pt,
+            img_paths=img_paths,
+        )
+
 # =========================================================
-# Layout 2x3: landscape, outer cut marks ONLY for poker cutlines
+# Layout Bleed: landscape, outer cut marks ONLY for poker cutlines
 # =========================================================
 def get_bleed_box_size_pt() -> Tuple[float, float]:
     """
@@ -2794,7 +3124,7 @@ def place_images_bleed_grid(c: canvas.Canvas,
         c.drawImage(ImageReader(str(processed)), dx, dy, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
 
     # Bleed-Marken nur zeichnen, wenn via INI aktiv (Länge und Linienbreite > 0)
-    if cutmarks_enabled_bleed():
+    if cutmarks_enabled_bleed() and _cutmarks_visible_for_side(is_back):
         draw_cutmarks_bleed_outer_only(c, x0, y0, cols=cols, rows=rows, box_w=box_w, box_h=box_h)
 
 def place_images_gutterfold_grid(
@@ -2859,12 +3189,26 @@ def place_images_gutterfold_grid(
                     rotate_degrees=0
                 )
 
-                draw_card_outer_bleed(
-                    c, processed_f,
-                    x, y_top,
-                    card_w, card_h,
-                    keep_left, keep_right, keep_top, keep_bottom
-                )
+                # NEW: Only use outer-bleed draw if preprocessing produced an expanded image of expected size.
+                psz = get_image_px_size(processed_f)
+                expected_w = INNER_W_PX + min(keep_left, BLEED_LEFT_TOP_PX) + min(keep_right, BLEED_RIGHT_BOTTOM_PX)
+                expected_h = INNER_H_PX + min(keep_top, BLEED_LEFT_TOP_PX) + min(keep_bottom, BLEED_RIGHT_BOTTOM_PX)
+                if psz and int(psz[0]) == int(expected_w) and int(psz[1]) == int(expected_h):
+                    draw_card_outer_bleed(
+                        c, processed_f,
+                        x, y_top,
+                        card_w, card_h,
+                        keep_left, keep_right, keep_top, keep_bottom
+                    )
+                else:
+                    processed_f2 = preprocess_card_image_for_pdf(front, quality_key, card_box_inches)
+                    draw_image_transformed(
+                        c, processed_f2,
+                        x, y_top,
+                        card_w, card_h,
+                        rotate_deg=0,
+                        mirror_x=False
+                )                 
             else:
                 processed_f = preprocess_card_image_for_pdf(
                     front, quality_key, card_box_inches
@@ -2890,13 +3234,27 @@ def place_images_gutterfold_grid(
                     keep_left, keep_right, keep_top, keep_bottom,
                     rotate_degrees=180
                 )
-
-                draw_card_outer_bleed(
-                    c, processed_b,
-                    x, y_bottom,
-                    card_w, card_h,
-                    keep_left, keep_right, keep_top, keep_bottom
-                )
+                
+                # NEW: Only use outer-bleed draw if preprocessing produced an expanded image of expected size.
+                psz = get_image_px_size(processed_b)
+                expected_w = INNER_W_PX + min(keep_left, BLEED_LEFT_TOP_PX) + min(keep_right, BLEED_RIGHT_BOTTOM_PX)
+                expected_h = INNER_H_PX + min(keep_top, BLEED_LEFT_TOP_PX) + min(keep_bottom, BLEED_RIGHT_BOTTOM_PX)
+                if psz and int(psz[0]) == int(expected_w) and int(psz[1]) == int(expected_h):
+                    draw_card_outer_bleed(
+                        c, processed_b,
+                        x, y_bottom,
+                        card_w, card_h,
+                        keep_left, keep_right, keep_top, keep_bottom
+                    )
+                else:
+                    processed_b2 = preprocess_card_image_for_pdf(back, quality_key, card_box_inches)
+                    draw_image_transformed(
+                        c, processed_b2,
+                        x, y_bottom,
+                        card_w, card_h,
+                        rotate_deg=180,
+                        mirror_x=False
+                    )                
             else:
                 processed_b = preprocess_card_image_for_pdf(
                     back, quality_key, card_box_inches
@@ -2926,7 +3284,7 @@ def place_images_gutterfold_grid(
         y0 + grid_h
     })
 
-    if cutmarks_enabled_standard():
+    if cutmarks_enabled_gutterfold():
         draw_cutmarks_gutterfold(
             c,
             x0=x0,
@@ -2943,13 +3301,95 @@ def place_images_gutterfold_grid(
         y_gutter_bottom = y0 + card_h
         y_gutter_top = y0 + card_h + fold_gutter
         bridge_x = [x0 + j * card_w for j in range(cols + 1)]
-        draw_gutter_bridge_marks(
-            c, bridge_x, y_gutter_bottom, y_gutter_top
-        )
+        if cutmarks_enabled_gutterfold():
+            draw_gutter_bridge_marks(
+                c, bridge_x, y_gutter_bottom, y_gutter_top
+            )
 
 # =========================================================
 # PDF generation
 # =========================================================
+def place_images_gutterbleed_grid(
+    c: canvas.Canvas,
+    pairs_group: List[Tuple[str, Optional[Path], Optional[Path]]],
+    x0: float, y0: float,
+    card_w: float, card_h: float,
+    cols: int,
+    fold_gutter: float,
+    col_gap_pt: float,
+    quality_key: str,
+    card_box_inches: Tuple[float, float],
+    bleed_keep_px: int
+):
+    """Gutterfold-style layout but with bleed between cards (column gaps).
+
+    Bleed thickness is derived from outer_bleed_keep_px (pixels), scaled to points
+    via the current format mapping (card_w/INNER_W_PX).
+    """
+    per_page = cols
+    padded = pairs_group + [("", None, None)] * (per_page - len(pairs_group))
+
+    grid_w = cols * card_w + max(0, cols - 1) * col_gap_pt
+    grid_h = 2 * card_h + fold_gutter
+    y_bottom = y0
+    y_top = y0 + card_h + fold_gutter
+    fold_y = y0 + card_h + fold_gutter / 2.0
+
+    keep = int(max(0, bleed_keep_px))
+
+    for col in range(cols):
+        _base, front, back = padded[col]
+        x = x0 + col * (card_w + col_gap_pt)
+
+        # FRONT
+        if front and front.exists():
+            processed_f = preprocess_card_image_outer_bleed(front, quality_key, keep, keep, keep, keep, rotate_degrees=0)
+            psz = get_image_px_size(processed_f)
+            expected_w = INNER_W_PX + min(keep, BLEED_LEFT_TOP_PX) + min(keep, BLEED_RIGHT_BOTTOM_PX)
+            expected_h = INNER_H_PX + min(keep, BLEED_LEFT_TOP_PX) + min(keep, BLEED_RIGHT_BOTTOM_PX)
+            if psz and int(psz[0]) == int(expected_w) and int(psz[1]) == int(expected_h):
+                draw_card_outer_bleed(c, processed_f, x, y_top, card_w, card_h, keep, keep, keep, keep)
+            else:
+                processed_f2 = preprocess_card_image_for_pdf(front, quality_key, card_box_inches)
+                draw_image_transformed(c, processed_f2, x, y_top, card_w, card_h, rotate_deg=0, mirror_x=False)
+
+        # BACK
+        if back and back.exists():
+            processed_b = preprocess_card_image_outer_bleed(back, quality_key, keep, keep, keep, keep, rotate_degrees=180)
+            psz = get_image_px_size(processed_b)
+            expected_w = INNER_W_PX + min(keep, BLEED_LEFT_TOP_PX) + min(keep, BLEED_RIGHT_BOTTOM_PX)
+            expected_h = INNER_H_PX + min(keep, BLEED_LEFT_TOP_PX) + min(keep, BLEED_RIGHT_BOTTOM_PX)
+            if psz and int(psz[0]) == int(expected_w) and int(psz[1]) == int(expected_h):
+                draw_card_outer_bleed(c, processed_b, x, y_bottom, card_w, card_h, keep, keep, keep, keep)
+            else:
+                processed_b2 = preprocess_card_image_for_pdf(back, quality_key, card_box_inches)
+                draw_image_transformed(c, processed_b2, x, y_bottom, card_w, card_h, rotate_deg=180, mirror_x=False)
+
+    # Fold line
+    if GF_DRAW_FOLD_LINE:
+        draw_gutterfold_line_horizontal(c, x0, fold_y, grid_w)
+
+    # Cut marks: both left+right edges for each card (gap => two cut lines)
+    x_marks = []
+    for j in range(cols):
+        lx = x0 + j * (card_w + col_gap_pt)
+        rx = lx + card_w
+        x_marks.extend([lx, rx])
+    x_marks = sorted({float(v) for v in x_marks})
+
+    y_edges = sorted({y0, y0 + card_h, y0 + card_h + fold_gutter, y0 + grid_h})
+
+    if cutmarks_enabled_gutterbleed():
+        draw_cutmarks_gutterfold(
+            c, x0=x0, y0=y0, grid_w=grid_w, grid_h=grid_h,
+            y_edges=y_edges, x_marks=x_marks,
+            line_width=CUTMARK_LINE_PT_GB, length_pt=CUTMARK_LEN_PT_GB
+        )
+        y_gutter_bottom = y0 + card_h
+        y_gutter_top = y0 + card_h + fold_gutter
+        draw_gutter_bridge_marks(c, x_marks, y_gutter_bottom, y_gutter_top, line_width=CUTMARK_LINE_PT_GB)
+
+
 def generate_pdf(layout_key: str,
                  out_path: Path,
                  pagesize_tuple: Tuple[float, float],
@@ -2970,6 +3410,7 @@ def generate_pdf(layout_key: str,
       - 'standard' (Innenbilder, ohne Bleed, mit inneren Kreuzen + Außenmarken)
       - 'bleed'    (Bleed-Box, NUR Außenmarken)
       - 'gutterfold' (2 Reihen + Falzgürtel, Brückenmarken)
+    - 'gutterbleed' (wie Gutterfold, aber mit Bleed zwischen Karten)
     Legacy-Keys ('3x3','3x4','2x3','2x5') werden weiter akzeptiert.
     """
     lk = layout_key.strip().lower()
@@ -3042,6 +3483,86 @@ def generate_pdf(layout_key: str,
 
                 draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}b",
                                  y_override=bottom_y_override)
+                c.showPage()
+        if save_at_end:
+            c.save()
+        return sheet_no
+
+    # --- STANDARDBLEED (Standard layout + bleed between cards) ---
+    if lk in ("standardbleed",):
+        def _compute_header_h_for_logo(logo_path, page_w, page_h, margins, grid_top_y):
+            if not logo_path:
+                return 0.0
+            lw, lh = fit_logo_with_constraints(logo_path, LOGO_MAX_W, LOGO_MAX_H)
+            max_header_h = max(0.0, page_h - margins["top"] - grid_top_y - LOGO_GAP_TO_GRID)
+            return min(lh, max_header_h)
+        card_w, card_h = POKER_W_PT, POKER_H_PT
+        keep_px = int(max(0, outer_bleed_keep_px))
+        s = card_w / float(INNER_W_PX)
+        gap_pt = 2.0 * float(keep_px) * s
+        top_res = RESERVE_TOP_PT
+        avail_w = page_w - MARGINS_PT["left"] - MARGINS_PT["right"] - RESERVE_LEFT_PT - RESERVE_RIGHT_PT
+        avail_h = page_h - MARGINS_PT["top"] - MARGINS_PT["bottom"] - top_res - BOTTOM_RESERVED_PT
+        pitch_x = card_w + gap_pt
+        pitch_y = card_h + gap_pt
+        cols = max(1, int((avail_w + gap_pt) // pitch_x))
+        rows = max(1, int((avail_h + gap_pt) // pitch_y))
+        grid_w = cols * card_w + max(0, cols - 1) * gap_pt
+        grid_h = rows * card_h + max(0, rows - 1) * gap_pt
+        x0, y0 = compute_grid_origin_centered_with_margins(
+            page_w, page_h, grid_w, grid_h,
+            MARGINS_PT,
+            top_res, BOTTOM_RESERVED_PT,
+            RESERVE_LEFT_PT, RESERVE_RIGHT_PT,
+        )
+        grid_top_y = y0 + grid_h
+        per_page = cols * rows
+        c = existing_canvas or create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
+        if draw_rulebook:
+            draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode="portrait_pref", force_mode=RULEBOOK_ROTATE_MODE)
+        bottom_y_override = BOTTOM_Y_LETTER_3X3 if pagesize_tuple == letter else None
+        _apply_logo = bool(logo_path)
+        sheet_no = int(start_sheet_no)
+        for group in chunk(pairs, per_page):
+            sheet_no += 1
+            fronts = [a for (_n, a, _b) in group] + [None] * (per_page - len(group))
+            backs  = [b for (_n, _a, b) in group] + [None] * (per_page - len(group))
+            has_backs_on_this_sheet = include_back_pages and any(p for p in backs if p and p.exists())
+            front_label = f"{sheet_no}a" if has_backs_on_this_sheet else f"{sheet_no}"
+            place_images_standardbleed_grid(
+                c, fronts,
+                x0, y0,
+                card_w, card_h,
+                cols=cols, rows=rows,
+                gap_pt=gap_pt,
+                is_back=False,
+                quality_key=quality_key,
+                card_box_inches=(POKER_W_PT/72.0, POKER_H_PT/72.0),
+                bleed_keep_px=keep_px,
+            )
+            if _apply_logo:
+                header_h = _compute_header_h_for_logo(logo_path, page_w, page_h, MARGINS_PT, grid_top_y)
+                if header_h > 1.0:
+                    draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
+            draw_bottom_line(c, page_w, copyright_name, version_str, front_label, y_override=bottom_y_override)
+            c.showPage()
+            if include_back_pages and any(p for p in backs if p and p.exists()):
+                place_images_standardbleed_grid(
+                    c, backs,
+                    x0 + BACK_X_OFFSET_PT, y0 + BACK_Y_OFFSET_PT,
+                    card_w, card_h,
+                    cols=cols, rows=rows,
+                    gap_pt=gap_pt,
+                    is_back=True,
+                    quality_key=quality_key,
+                    card_box_inches=(POKER_W_PT/72.0, POKER_H_PT/72.0),
+                    bleed_keep_px=keep_px,
+                )
+                if _apply_logo:
+                    header_h = _compute_header_h_for_logo(logo_path, page_w, page_h, MARGINS_PT, grid_top_y)
+                    if header_h > 1.0:
+                        draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
+                draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}b", y_override=bottom_y_override)
                 c.showPage()
         if save_at_end:
             c.save()
@@ -3128,7 +3649,8 @@ def generate_pdf(layout_key: str,
         top_res = RESERVE_TOP_PT
         avail_w = page_w - MARGINS_PT["left"] - MARGINS_PT["right"]
         avail_h = page_h - MARGINS_PT["top"] - MARGINS_PT["bottom"] - top_res - BOTTOM_RESERVED_PT
-        if avail_h < (2 * card_h + gf_extra):
+        needed_h = 2 * card_h + gf_extra
+        if avail_h < needed_h:
             raise ValueError(
                 t(
                     "error_gutterfold_space",
@@ -3169,6 +3691,72 @@ def generate_pdf(layout_key: str,
                     draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
             draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}")
             c.showPage()
+        if save_at_end:
+            c.save()
+        return sheet_no
+
+    # --- GUTTERBLEED ---
+    if lk in ("gutterbleed",):
+        def _compute_header_h_for_logo(logo_path, page_w, page_h, margins, grid_top_y):
+            if not logo_path:
+                return 0.0
+            lw, lh = fit_logo_with_constraints(logo_path, LOGO_MAX_W, LOGO_MAX_H)
+            max_header_h = max(0.0, page_h - margins["top"] - grid_top_y - LOGO_GAP_TO_GRID)
+            return min(lh, max_header_h)
+
+        card_w, card_h = POKER_W_PT, POKER_H_PT
+        gf_extra = GF_FOLD_GUTTER_PT
+        top_res = RESERVE_TOP_PT
+        avail_w = page_w - MARGINS_PT["left"] - MARGINS_PT["right"]
+        avail_h = page_h - MARGINS_PT["top"] - MARGINS_PT["bottom"] - top_res - BOTTOM_RESERVED_PT
+        needed_h = 2 * card_h + gf_extra
+        if avail_h < needed_h:
+            raise ValueError(
+                t(
+                    "error_gutterfold_space",
+                    avail=avail_h,
+                    need=needed_h,
+                    margin=PRINT_SAFE_MARGIN_CM,
+                    top=top_res,
+                    bottom=BOTTOM_RESERVED_PT
+                )
+            )
+
+        # Bleed size derived from outer_bleed_keep_px (px) -> points via current format scaling
+        keep_px = int(max(0, outer_bleed_keep_px))
+        s = card_w / float(INNER_W_PX)
+        col_gap_pt = 2.0 * float(keep_px) * s
+
+        pitch = card_w + col_gap_pt
+        cols = max(1, int((avail_w + col_gap_pt) // pitch))
+        grid_w = cols * card_w + max(0, cols - 1) * col_gap_pt
+        grid_h = 2 * card_h + gf_extra
+        x0, y0 = compute_grid_origin_centered_with_margins(page_w, page_h, grid_w, grid_h, MARGINS_PT, top_res, BOTTOM_RESERVED_PT)
+        grid_top_y = y0 + grid_h
+
+        per_page = cols
+        c = existing_canvas or create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
+        if draw_rulebook:
+            draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode="landscape_pref", force_mode=RULEBOOK_ROTATE_MODE)
+
+        _apply_logo = bool(logo_path)
+        sheet_no = int(start_sheet_no)
+        for group in chunk(pairs, per_page):
+            sheet_no += 1
+            place_images_gutterbleed_grid(
+                c, group, x0, y0, card_w, card_h,
+                cols=cols, fold_gutter=GF_FOLD_GUTTER_PT, col_gap_pt=col_gap_pt,
+                quality_key=quality_key,
+                card_box_inches=(POKER_W_PT/72.0, POKER_H_PT/72.0),
+                bleed_keep_px=keep_px
+            )
+            if _apply_logo:
+                header_h = _compute_header_h_for_logo(logo_path, page_w, page_h, MARGINS_PT, grid_top_y)
+                if header_h > 1.0:
+                    draw_logo_in_header_band(c, logo_path, page_w, page_h, MARGINS_PT, header_h)
+            draw_bottom_line(c, page_w, copyright_name, version_str, f"{sheet_no}")
+            c.showPage()
+
         if save_at_end:
             c.save()
         return sheet_no
@@ -3385,10 +3973,12 @@ def main():
     #    (nur Layouts, die für ALLE Ordner/Formate funktionieren)
     # ----------------------------------------------------------
     requested_bleed = any(k.lower() in ("bleed", "2x3", "2x5") for k in layout_keys)
-    requested_gutter = any(k.lower() == "gutterfold" for k in layout_keys)
+    requested_standardbleed = any(k.lower() in ("standardbleed",) for k in layout_keys)
+    requested_gutter = any(k.lower() in ("gutterfold", "gutterbleed") for k in layout_keys)
 
     fmt_state: Dict[int, Dict[str, object]] = {}
     bleed_ok_all = True
+    standardbleed_ok_all = True
     gutter_ok_all = True
 
     for fid in fmt_present:
@@ -3418,6 +4008,9 @@ def main():
         if requested_bleed and not all_have_bleed_f:
             bleed_ok_all = False
 
+        if requested_standardbleed and not all_have_bleed_f:
+            standardbleed_ok_all = False
+
         fmt_state[fid] = {
             'fmt': fmt_dict,
             'pairs': pairs_f,
@@ -3430,8 +4023,12 @@ def main():
         layout_keys = [k for k in layout_keys if k.lower() not in ("bleed", "2x3", "2x5")]
         print(t('skip_2x3', minw=BLEED_W_PX, minh=BLEED_H_PX))
 
+    if requested_standardbleed and not standardbleed_ok_all:
+        layout_keys = [k for k in layout_keys if k.lower() not in ("standardbleed",)]
+        print(t('skip_standardbleed', minw=BLEED_W_PX, minh=BLEED_H_PX))
+
     if requested_gutter and not gutter_ok_all:
-        layout_keys = [k for k in layout_keys if k.lower() != "gutterfold"]
+        layout_keys = [k for k in layout_keys if k.lower() not in ("gutterfold", "gutterbleed")]
         print(t('skip_gutterfold_missing_backs', missing="…"))
 
     if not layout_keys:
@@ -3549,25 +4146,22 @@ def main():
         if lk_norm in ("2x3", "2x5"):
             lk_norm = "bleed"
 
-        for base_pagesize, suffix in size_modes:
-            if lk_norm == "gutterfold":
+        for base_pagesize, paper_suffix in size_modes:
+            if lk_norm in ("gutterfold", "gutterbleed"):
                 pagesize_tuple = choose_gutterfold_orientation(base_pagesize)
             elif lk_norm == "bleed":
                 pagesize_tuple = landscape(base_pagesize)
             else:
                 pagesize_tuple = base_pagesize
 
-            if lk_norm == "standard":
-                layout_suffix = "_standard"
-            elif lk_norm == "bleed":
-                layout_suffix = "_bleed"
-            else:
-                layout_suffix = "_gutterfold"
+            # Layout-Suffix IMMER sauber aus lk_norm ableiten
+            layout_suffix = f"_{lk_norm}"
 
-            out_path = (generation_dir / f"{out_base}{suffix}{layout_suffix}.pdf").resolve()
+            # paper_suffix kommt aus size_modes (z.B. "_A4" / "_Letter")
+            out_path = (generation_dir / f"{out_base}{paper_suffix}{layout_suffix}.pdf").resolve()
 
             c = create_pdf_canvas(out_path, pagesize_tuple, author=(copyright_name or ''))
-            rb_mode = "landscape_pref" if lk_norm in ("bleed", "gutterfold") else "portrait_pref"
+            rb_mode = "landscape_pref" if lk_norm in ("bleed", "gutterfold", "gutterbleed") else "portrait_pref"
             draw_rulebook_pages(c, pagesize_tuple, rulebook_images or [], mode=rb_mode, force_mode=RULEBOOK_ROTATE_MODE)
 
             sheet_no = 0
@@ -3589,7 +4183,7 @@ def main():
                 if not isinstance(pairs_f, list) or not pairs_f:
                     continue
 
-                if lk_norm == "standard":
+                if lk_norm in ("standard", "standardbleed"):
                     outer_keep = OUTER_BLEED_KEEP_PX
                 elif lk_norm == "bleed":
                     outer_keep = 0
