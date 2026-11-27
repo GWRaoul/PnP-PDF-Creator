@@ -111,7 +111,7 @@ _PAUSE_ALREADY_SHOWN = False
 # =========================================================
 # Script version / debug
 # =========================================================
-SCRIPT_VERSION = 'V1.5-2026-06-11'
+SCRIPT_VERSION = 'V1.6-2026-11-26'
 DEBUG_PREPROCESS = False  # set True to print per-image crop/resize diagnostics
 
 # =========================================================
@@ -266,28 +266,33 @@ LOGO_GAP_TO_GRID = 2.0
 # Bottom line
 COPY_MAX_CHARS = 150
 
-# 3x3 + Gutterfold cut marks (standard)
-# These are overridable via INI (section [cutmarks]).
+# Standard cut marks ([cutmarks_standard])
 CUTMARK_LEN_PT_STD = 5.0
 CUTMARK_LINE_PT_STD = 1.0
+CUTMARK_COLOR_STD = "#000000"
+CUTMARKS_VISIBLE_STD = "both"
 
-# Standardbleed cut marks (standard defaults; overridable via INI [cutmarks])
-CUTMARK_LEN_PT_SB = CUTMARK_LEN_PT_STD
-CUTMARK_LINE_PT_SB = CUTMARK_LINE_PT_STD
+# Standardbleed cut marks ([cutmarks_standardbleed])
+CUTMARK_LEN_PT_SB = 5.0
+CUTMARK_LINE_PT_SB = 1.0
+CUTMARK_COLOR_SB = "#000000"
+CUTMARKS_VISIBLE_SB = "both"
 
-# Gutterfold cut marks (standard defaults; overridable via INI [cutmarks])
-CUTMARK_LEN_PT_GF = CUTMARK_LEN_PT_STD
-CUTMARK_LINE_PT_GF = CUTMARK_LINE_PT_STD
-# Gutterbleed cut marks (standard defaults; overridable via INI [cutmarks])
-CUTMARK_LEN_PT_GB = CUTMARK_LEN_PT_STD
-CUTMARK_LINE_PT_GB = CUTMARK_LINE_PT_STD
+# Gutterfold cut marks ([cutmarks_gutterfold])
+CUTMARK_LEN_PT_GF = 5.0
+CUTMARK_LINE_PT_GF = 1.0
+CUTMARK_COLOR_GF = "#000000"
 
-# 2x3 marks (outer only, cut to poker area inside bleed image)
+# Gutterbleed cut marks ([cutmarks_gutterbleed])
+CUTMARK_LEN_PT_GB = 5.0
+CUTMARK_LINE_PT_GB = 1.0
+CUTMARK_COLOR_GB = "#000000"
+
+# Bleed cut marks ([cutmarks_bleed])
 CUTMARK_LEN_PT_BLEED = 20.0
 CUTMARK_LINE_PT_BLEED = 1.0
-
-# Cutmark visibility on duplex layouts (Standard/Bleed): front | back | both
-CUTMARKS_VISIBLE = 'both'
+CUTMARK_COLOR_BLEED = "#000000"
+CUTMARKS_VISIBLE_BLEED = "both"
 
 # 2x3 card image geometry (pixels of the source image)
 BLEED_W_PX = 825
@@ -505,30 +510,79 @@ def _get_outer_bleed_keep_px(cp: configparser.ConfigParser,
         return 20
     return v       
 
+def _get_cutmark_color(
+    cp: configparser.ConfigParser,
+    section: str,
+    fallback: str = "#000000",
+) -> str:
+    """Return a validated #RRGGBB color or the fallback."""
+    try:
+        value = cp.get(section, "color", fallback=fallback).strip()
+    except Exception:
+        return fallback
+    if len(value) != 7 or not value.startswith("#"):
+        return fallback
+    try:
+        int(value[1:], 16)
+    except ValueError:
+        return fallback
+    return value.upper()
+
+def _get_cutmarks_visible(
+    cp: configparser.ConfigParser,
+    section: str,
+    fallback: str = "both",
+) -> str:
+    """Return front, back, both, or none for a duplex layout."""
+    try:
+        value = cp.get(section, "visible", fallback=fallback).strip().lower()
+    except Exception:
+        return fallback
+    return value if value in ("front", "back", "both", "none") else fallback
+
+
+
 def ensure_cutmark_defaults(cp: configparser.ConfigParser) -> bool:
-    # Ensure [cutmarks] section exists with defaults. Returns True if cp was modified.
+    """Create independent cutmark settings for every PDF layout."""
     changed = False
-    if not cp.has_section('cutmarks'):
-        cp.add_section('cutmarks')
-        changed = True
-    defaults = {
-        'length_pt_standard': str(CUTMARK_LEN_PT_STD),
-        'width_pt_standard': str(CUTMARK_LINE_PT_STD),
-        'length_pt_standardbleed': str(CUTMARK_LEN_PT_SB),
-        'width_pt_standardbleed': str(CUTMARK_LINE_PT_SB),
-        'outer_bleed_keep_px': str(OUTER_BLEED_KEEP_PX),    
-        'length_pt_gutterfold': str(CUTMARK_LEN_PT_GF),
-        'width_pt_gutterfold': str(CUTMARK_LINE_PT_GF),
-        'length_pt_gutterbleed': str(CUTMARK_LEN_PT_GB),
-        'width_pt_gutterbleed': str(CUTMARK_LINE_PT_GB),
-        'length_pt_bleed': str(CUTMARK_LEN_PT_BLEED),
-        'width_pt_bleed': str(CUTMARK_LINE_PT_BLEED),
-        'cutmark_color': '#000000',
+    section_defaults = {
+        "cutmarks_standard": {
+            "length_pt": str(CUTMARK_LEN_PT_STD),
+            "width_pt": str(CUTMARK_LINE_PT_STD),
+            "color": "#000000",
+            "visible": "both",
+        },
+        "cutmarks_standardbleed": {
+            "length_pt": str(CUTMARK_LEN_PT_SB),
+            "width_pt": str(CUTMARK_LINE_PT_SB),
+            "color": "#000000",
+            "visible": "both",
+        },
+        "cutmarks_bleed": {
+            "length_pt": str(CUTMARK_LEN_PT_BLEED),
+            "width_pt": str(CUTMARK_LINE_PT_BLEED),
+            "color": "#000000",
+            "visible": "both",
+        },
+        "cutmarks_gutterfold": {
+            "length_pt": str(CUTMARK_LEN_PT_GF),
+            "width_pt": str(CUTMARK_LINE_PT_GF),
+            "color": "#000000",
+        },
+        "cutmarks_gutterbleed": {
+            "length_pt": str(CUTMARK_LEN_PT_GB),
+            "width_pt": str(CUTMARK_LINE_PT_GB),
+            "color": "#000000",
+        },
     }
-    for k, v in defaults.items():
-        if not cp.has_option('cutmarks', k):
-            cp.set('cutmarks', k, v)
+    for section, defaults in section_defaults.items():
+        if not cp.has_section(section):
+            cp.add_section(section)
             changed = True
+        for option, value in defaults.items():
+            if not cp.has_option(section, option):
+                cp.set(section, option, value)
+                changed = True
     return changed
 
 def ensure_bleed_defaults(cp: configparser.ConfigParser) -> bool:
@@ -681,29 +735,59 @@ def load_assets_from_config(cp: configparser.ConfigParser) -> None:
     RULEBOOK_ROTATE_MODE = rotate_mode    
 
 def load_cutmarks_from_config(cp: configparser.ConfigParser) -> None:
-    # Load cutmark settings from INI into the global variables.
+    """Load every layout exclusively from its own cutmark section."""
     global CUTMARK_LEN_PT_STD, CUTMARK_LINE_PT_STD
     global CUTMARK_LEN_PT_SB, CUTMARK_LINE_PT_SB
     global CUTMARK_LEN_PT_GF, CUTMARK_LINE_PT_GF
     global CUTMARK_LEN_PT_GB, CUTMARK_LINE_PT_GB
     global CUTMARK_LEN_PT_BLEED, CUTMARK_LINE_PT_BLEED
-    global CUTMARK_COLOR, OUTER_BLEED_KEEP_PX
-    global CUTMARKS_VISIBLE
-    CUTMARK_LEN_PT_STD = _get_nonnegative_float(cp, 'cutmarks', 'length_pt_standard', CUTMARK_LEN_PT_STD)
-    CUTMARK_LINE_PT_STD = _get_nonnegative_float(cp, 'cutmarks', 'width_pt_standard', CUTMARK_LINE_PT_STD)
-    CUTMARK_LEN_PT_SB = _get_nonnegative_float(cp, 'cutmarks', 'length_pt_standardbleed', CUTMARK_LEN_PT_SB)
-    CUTMARK_LINE_PT_SB = _get_nonnegative_float(cp, 'cutmarks', 'width_pt_standardbleed', CUTMARK_LINE_PT_SB)
-    OUTER_BLEED_KEEP_PX = _get_outer_bleed_keep_px(cp, 'cutmarks', 'outer_bleed_keep_px', OUTER_BLEED_KEEP_PX)
-    CUTMARK_LEN_PT_GF = _get_nonnegative_float(cp, 'cutmarks', 'length_pt_gutterfold', CUTMARK_LEN_PT_GF)
-    CUTMARK_LINE_PT_GF = _get_nonnegative_float(cp, 'cutmarks', 'width_pt_gutterfold', CUTMARK_LINE_PT_GF)
-    CUTMARK_LEN_PT_BLEED = _get_nonnegative_float(cp, 'cutmarks', 'length_pt_bleed', CUTMARK_LEN_PT_BLEED)
-    CUTMARK_LINE_PT_BLEED = _get_nonnegative_float(cp, 'cutmarks', 'width_pt_bleed', CUTMARK_LINE_PT_BLEED)
-    CUTMARK_COLOR = cp.get('cutmarks', 'cutmark_color', fallback='#000000').strip()
+    global CUTMARK_COLOR_STD, CUTMARKS_VISIBLE_STD
+    global CUTMARK_COLOR_SB, CUTMARKS_VISIBLE_SB
+    global CUTMARK_COLOR_BLEED, CUTMARKS_VISIBLE_BLEED
+    global CUTMARK_COLOR_GF, CUTMARK_COLOR_GB
 
-    v = cp.get('cutmarks', 'cutmarks_visible', fallback='both').strip().lower()
-    if v not in ('front', 'back', 'both'):
-        v = 'both'
-    CUTMARKS_VISIBLE = v
+    CUTMARK_LEN_PT_STD = _get_nonnegative_float(
+        cp, "cutmarks_standard", "length_pt", CUTMARK_LEN_PT_STD
+    )
+    CUTMARK_LINE_PT_STD = _get_nonnegative_float(
+        cp, "cutmarks_standard", "width_pt", CUTMARK_LINE_PT_STD
+    )
+    CUTMARK_COLOR_STD = _get_cutmark_color(cp, "cutmarks_standard")
+    CUTMARKS_VISIBLE_STD = _get_cutmarks_visible(cp, "cutmarks_standard")
+
+    CUTMARK_LEN_PT_SB = _get_nonnegative_float(
+        cp, "cutmarks_standardbleed", "length_pt", CUTMARK_LEN_PT_SB
+    )
+    CUTMARK_LINE_PT_SB = _get_nonnegative_float(
+        cp, "cutmarks_standardbleed", "width_pt", CUTMARK_LINE_PT_SB
+    )
+    CUTMARK_COLOR_SB = _get_cutmark_color(cp, "cutmarks_standardbleed")
+    CUTMARKS_VISIBLE_SB = _get_cutmarks_visible(cp, "cutmarks_standardbleed")
+
+    CUTMARK_LEN_PT_BLEED = _get_nonnegative_float(
+        cp, "cutmarks_bleed", "length_pt", CUTMARK_LEN_PT_BLEED
+    )
+    CUTMARK_LINE_PT_BLEED = _get_nonnegative_float(
+        cp, "cutmarks_bleed", "width_pt", CUTMARK_LINE_PT_BLEED
+    )
+    CUTMARK_COLOR_BLEED = _get_cutmark_color(cp, "cutmarks_bleed")
+    CUTMARKS_VISIBLE_BLEED = _get_cutmarks_visible(cp, "cutmarks_bleed")
+
+    CUTMARK_LEN_PT_GF = _get_nonnegative_float(
+        cp, "cutmarks_gutterfold", "length_pt", CUTMARK_LEN_PT_GF
+    )
+    CUTMARK_LINE_PT_GF = _get_nonnegative_float(
+        cp, "cutmarks_gutterfold", "width_pt", CUTMARK_LINE_PT_GF
+    )
+    CUTMARK_COLOR_GF = _get_cutmark_color(cp, "cutmarks_gutterfold")
+
+    CUTMARK_LEN_PT_GB = _get_nonnegative_float(
+        cp, "cutmarks_gutterbleed", "length_pt", CUTMARK_LEN_PT_GB
+    )
+    CUTMARK_LINE_PT_GB = _get_nonnegative_float(
+        cp, "cutmarks_gutterbleed", "width_pt", CUTMARK_LINE_PT_GB
+    )
+    CUTMARK_COLOR_GB = _get_cutmark_color(cp, "cutmarks_gutterbleed")
 
 def save_lang_to_ini(lang: str) -> None:
     ini_path = get_ini_path()
@@ -727,7 +811,6 @@ def save_lang_to_ini(lang: str) -> None:
     write_config(cp)
 
 def prompt_language_if_needed():
-    ini_existed = get_ini_path().exists()
     global LANG
     cp = load_config()
     changed = ensure_cutmark_defaults(cp)
@@ -737,11 +820,6 @@ def prompt_language_if_needed():
     changed = ensure_backside_offset_defaults(cp) or changed
     changed = ensure_gutterfold_defaults(cp) or changed
 
-    # Only for brand new INI files: add cutmarks_visible default (no migration for existing INIs)
-    if (not ini_existed) and (not cp.has_option('cutmarks', 'cutmarks_visible')):
-        cp.set('cutmarks', 'cutmarks_visible', 'both')
-        changed = True
-    
     # Optional: gleich laden & an CARD_FORMATS anhängen (am Ende der Liste)
     fmt6 = load_custom_format_from_config(cp)
     if fmt6:
@@ -791,10 +869,7 @@ def prompt_language_if_needed():
     )
     # Backside-Offset laden (mm -> pt)
     load_backside_offset_from_config(cp)
-    # --- SAFETY: Stelle sicher, dass cutmark_color wirklich vorhanden ist ---
-    if not cp.has_option('cutmarks', 'cutmark_color'):
-        cp.set('cutmarks', 'cutmark_color', '#000000')
-        changed = True
+
     # Persist INI if defaults were added or language was set
     if changed:
         write_config(cp)
@@ -1155,6 +1230,7 @@ def write_pdf_config_template(dst: Path) -> None:
         "",
         "# 2) LAYOUT:",
         "# Allowed values (case-insensitive): Standard | Standardbleed | Bleed | Gutterfold | Gutterbleed | All",
+        "#    Multiple layouts can be combined with commas, e.g. Standard,Bleed.",
         "#    All = generates all supported layouts your images qualify for.",
         "LAYOUT=All",
         "",
@@ -1245,18 +1321,44 @@ def _map_layout_value(v: str) -> List[str]:
     s = (v or "").strip().lower()
     if s in ("", "all", "a"):
         return ["standard", "standardbleed", "bleed", "gutterfold", "gutterbleed"]
-    if s in ("standardbleed", "sb"):
-        return ["standardbleed"]
-    if s in ("standard", "s", "3x3", "3x4", "3"):
-        return ["standard"]
-    if s in ("bleed", "b", "2x3", "2x5", "2"):
-        return ["bleed"]
-    if s in ("gutterfold", "g", "gf"):
-        return ["gutterfold"]
-    if s in ("gutterbleed", "gb"):
-        return ["gutterbleed"]
-    # Fallback
-    return ["standard", "bleed", "gutterfold", "gutterbleed"]
+    mapping = {
+        "standard": "standard",
+        "s": "standard",
+        "3x3": "standard",
+        "3x4": "standard",
+        "3": "standard",
+
+        "standardbleed": "standardbleed",
+        "sb": "standardbleed",
+
+        "bleed": "bleed",
+        "b": "bleed",
+        "2x3": "bleed",
+        "2x5": "bleed",
+        "2": "bleed",
+
+        "gutterfold": "gutterfold",
+        "g": "gutterfold",
+        "gf": "gutterfold",
+
+        "gutterbleed": "gutterbleed",
+        "gb": "gutterbleed",
+    }
+
+    layouts = []
+
+    for part in s.split(","):
+        key = part.strip()
+        if key in mapping:
+            layout = mapping[key]
+            if layout not in layouts:
+                layouts.append(layout)
+
+    # Fallback for completely invalid input
+    if not layouts:
+        return ["standard", "standardbleed", "bleed", "gutterfold", "gutterbleed"]
+
+    return layouts
 
 def _map_quality_value(v: str) -> str:
     s = (v or "").strip().lower()
@@ -1769,6 +1871,92 @@ def draw_card_outer_bleed(
         width=total_w, height=total_h,
         preserveAspectRatio=True, mask="auto"
     )
+    
+def draw_card_full_bleed_clipped(
+    c: canvas.Canvas,
+    processed_path: Path,
+    x: float,
+    y: float,
+    card_w: float,
+    card_h: float,
+    keep_left_px: int,
+    keep_right_px: int,
+    keep_top_px: int,
+    keep_bottom_px: int,
+) -> None:
+    """
+    Draw one reusable full-bleed image and clip it to the bleed edges
+    required by the card's position in the Standard grid.
+
+    Unlike preprocess_card_image_outer_bleed(), this function does not
+    create a separate raster image for every combination of visible
+    bleed edges. The same full-bleed image can therefore be reused by
+    ReportLab as one PDF Image XObject.
+
+    The INNER area of the source image maps exactly to card_w/card_h.
+    Any unwanted bleed is hidden with a PDF clipping path.
+    """
+    keep_left_px = max(
+        0,
+        min(int(keep_left_px), int(BLEED_LEFT_TOP_PX)),
+    )
+    keep_right_px = max(
+        0,
+        min(int(keep_right_px), int(BLEED_RIGHT_BOTTOM_PX)),
+    )
+    keep_top_px = max(
+        0,
+        min(int(keep_top_px), int(BLEED_LEFT_TOP_PX)),
+    )
+    keep_bottom_px = max(
+        0,
+        min(int(keep_bottom_px), int(BLEED_RIGHT_BOTTOM_PX)),
+    )
+
+    # Keep the INNER card area mapped exactly to the card box.
+    scale_x = card_w / float(INNER_W_PX)
+    scale_y = card_h / float(INNER_H_PX)
+
+    # Position and dimensions of the complete bleed image.
+    full_x = x - BLEED_LEFT_TOP_PX * scale_x
+    full_y = y - BLEED_RIGHT_BOTTOM_PX * scale_y
+    full_w = BLEED_W_PX * scale_x
+    full_h = BLEED_H_PX * scale_y
+
+    # Visible area: trim area plus only the requested outer bleed.
+    clip_x = x - keep_left_px * scale_x
+    clip_y = y - keep_bottom_px * scale_y
+    clip_w = (
+        card_w
+        + keep_left_px * scale_x
+        + keep_right_px * scale_x
+    )
+    clip_h = (
+        card_h
+       + keep_top_px * scale_y
+        + keep_bottom_px * scale_y
+    )
+
+    c.saveState()
+    try:
+        clip_path = c.beginPath()
+        clip_path.rect(clip_x, clip_y, clip_w, clip_h)
+
+        # stroke=0 and fill=0 ensure that the clipping rectangle itself
+        # is not visible in the generated PDF.
+        c.clipPath(clip_path, stroke=0, fill=0)
+
+        c.drawImage(
+            ImageReader(str(processed_path)),
+            full_x,
+            full_y,
+            width=full_w,
+            height=full_h,
+            preserveAspectRatio=False,
+            mask="auto",
+        )
+    finally:
+        c.restoreState()
 
 # =========================================================
 # Layout capability checks (mixed image sizes)
@@ -2621,6 +2809,7 @@ def draw_gutter_bridge_marks(
     y_gutter_bottom: float,
     y_gutter_top: float,
     line_width: float = CUTMARK_LINE_PT_GF,
+    color: str = None,
 ):
     """
     Draw vertical 'bridge' cut marks ONLY across the gutter area,
@@ -2628,7 +2817,7 @@ def draw_gutter_bridge_marks(
     """
     c.saveState()
     c.setLineWidth(line_width)
-    c.setStrokeColor(CUTMARK_COLOR)
+    c.setStrokeColor(CUTMARK_COLOR_GF if color is None else color)
     for x in x_positions:
         c.line(x, y_gutter_bottom, x, y_gutter_top)
     c.restoreState()
@@ -2655,17 +2844,15 @@ def cutmarks_enabled_gutterbleed() -> bool:
     return (CUTMARK_LEN_PT_GB > 0.0) and (CUTMARK_LINE_PT_GB > 0.0)
 
 
-def _cutmarks_visible_for_side(is_back: bool) -> bool:
-    """Return True if cutmarks should be drawn on this page side for duplex layouts.
-
-    cutmarks_visible values: front | back | both
-    """
-    v = (CUTMARKS_VISIBLE or 'both').strip().lower()
-    if v == 'front':
+def _cutmarks_visible_for_side(visible: str, is_back: bool) -> bool:
+    """Return whether cutmarks are visible on the current duplex page side."""
+    value = (visible or "both").strip().lower()
+    if value == "none":
+        return False
+    if value == "front":
         return not bool(is_back)
-    if v == 'back':
+    if value == "back":
         return bool(is_back)
-    # default / both / invalid
     return True
 
 def draw_cutmarks_gutterfold(
@@ -2676,11 +2863,12 @@ def draw_cutmarks_gutterfold(
     x_marks: List[float],
     line_width: float = None,
     length_pt: float = None,
+    color: str = None,
 ):
     """Outside-only crop marks (similar visual style to your 2x3 outer marks)."""
     c.saveState()
     c.setLineWidth(CUTMARK_LINE_PT_GF if line_width is None else line_width)
-    c.setStrokeColor(CUTMARK_COLOR)
+    c.setStrokeColor(CUTMARK_COLOR_GF if color is None else color)
     L = CUTMARK_LEN_PT_GF if length_pt is None else length_pt
     x_left = x0
     x_right = x0 + grid_w
@@ -2703,7 +2891,7 @@ def draw_cutmarks_gutterfold(
 def draw_inner_crosses_grid(c: canvas.Canvas, x0: float, y0: float, card_w: float, card_h: float, cols: int, rows: int):
     c.saveState()
     c.setLineWidth(CUTMARK_LINE_PT_STD)
-    c.setStrokeColor(CUTMARK_COLOR)
+    c.setStrokeColor(CUTMARK_COLOR_STD)
     half = CUTMARK_LEN_PT_STD / 2.0
     xs = [x0 + j * card_w for j in range(1, cols)]
     ys = [y0 + i * card_h for i in range(1, rows)]
@@ -2716,7 +2904,7 @@ def draw_inner_crosses_grid(c: canvas.Canvas, x0: float, y0: float, card_w: floa
 def draw_outer_marks_grid(c: canvas.Canvas, x0: float, y0: float, card_w: float, card_h: float, cols: int, rows: int):
     c.saveState()
     c.setLineWidth(CUTMARK_LINE_PT_STD)
-    c.setStrokeColor(CUTMARK_COLOR)
+    c.setStrokeColor(CUTMARK_COLOR_STD)
     half = CUTMARK_LEN_PT_STD / 2.0
     grid_w = cols * card_w
     grid_h = rows * card_h
@@ -2741,7 +2929,7 @@ def draw_outer_marks_grid(c: canvas.Canvas, x0: float, y0: float, card_w: float,
 def draw_corner_marks_grid(c: canvas.Canvas, x0: float, y0: float, card_w: float, card_h: float, cols: int, rows: int):
     c.saveState()
     c.setLineWidth(CUTMARK_LINE_PT_STD)
-    c.setStrokeColor(CUTMARK_COLOR)
+    c.setStrokeColor(CUTMARK_COLOR_STD)
     half = CUTMARK_LEN_PT_STD / 2.0
     grid_w = cols * card_w
     grid_h = rows * card_h
@@ -2776,7 +2964,7 @@ def draw_card_corner_crosses_standardbleed(
     """
     c.saveState()
     c.setLineWidth(CUTMARK_LINE_PT_SB)
-    c.setStrokeColor(CUTMARK_COLOR)
+    c.setStrokeColor(CUTMARK_COLOR_SB)
     half = CUTMARK_LEN_PT_SB / 2.0
     pitch_x = card_w + max(0.0, gap_pt)
     pitch_y = card_h + max(0.0, gap_pt)
@@ -2921,57 +3109,112 @@ def place_images_grid_inner(
         use_outer = outer_bleed_keep_px > 0 and (keep_left or keep_right or keep_top or keep_bottom)
 
         if use_outer:
-            processed = None
-            # NEW: allow outer bleed either with real bleed OR with auto-bleed-eligible INNER images
+            # Standard layout optimization:
+            #
+            # Always preprocess one complete bleed image per source
+            # and use PDF clipping to control which outer edges are
+            # visible. This avoids separate JPEG files for every
+            # left/right/top/bottom combination.
             sz = get_image_px_size(img_path)
             has_real_bleed = bool(sz and sz[0] >= BLEED_W_PX and sz[1] >= BLEED_H_PX)
             auto_ok = _is_auto_bleed_eligible_size(sz)
             if has_real_bleed or auto_ok:
-                processed = preprocess_card_image_outer_bleed(
-                    img_path, quality_key,
-                    keep_left, keep_right, keep_top, keep_bottom,
-                    rotate_degrees=0
+                processed = preprocess_card_image_for_pdf(
+                    img_path,
+                    quality_key,
+                    get_bleed_box_inches(),
+                    crop_bleed=False,
                 )
-            # If outer-bleed preprocessing still couldn't produce an expanded image, fallback to inner draw
-            psz = get_image_px_size(processed) if processed else None
-            expected_w = INNER_W_PX + min(keep_left, BLEED_LEFT_TOP_PX) + min(keep_right, BLEED_RIGHT_BOTTOM_PX)
-            expected_h = INNER_H_PX + min(keep_top, BLEED_LEFT_TOP_PX) + min(keep_bottom, BLEED_RIGHT_BOTTOM_PX)
-            if psz and int(psz[0]) == int(expected_w) and int(psz[1]) == int(expected_h):
-                total_w = s * (INNER_W_PX + keep_left + keep_right)
-                total_h = s * (INNER_H_PX + keep_top + keep_bottom)
-                dx = x - s * keep_left
-                dy = y - s * keep_bottom
-                c.drawImage(
-                    ImageReader(str(processed)),
-                    dx, dy,
-                    width=total_w, height=total_h,
-                    preserveAspectRatio=False, mask="auto"
-                )
+                psz = get_image_px_size(processed)
+                if (
+                    psz
+                    and int(psz[0]) == int(BLEED_W_PX)
+                    and int(psz[1]) == int(BLEED_H_PX)
+                ):
+                    draw_card_full_bleed_clipped(
+                        c,
+                        processed,
+                        x,
+                        y,
+                        card_w,
+                        card_h,
+                        keep_left,
+                        keep_right,
+                        keep_top,
+                        keep_bottom,
+                    )
+                else:
+                    # Safety fallback if preprocessing did not produce
+                    # the expected full-bleed dimensions.
+                    processed_inner = preprocess_card_image_for_pdf(
+                        img_path,
+                        quality_key,
+                        card_box_inches,
+                        crop_bleed=True,
+                    )
+                    draw_w, draw_h = fit_image_into_box(
+                        processed_inner,
+                        card_w,
+                        card_h,
+                    )
+                    dx = x + (card_w - draw_w) / 2.0
+                    dy = y + (card_h - draw_h) / 2.0
+                    c.drawImage(
+                        ImageReader(str(processed_inner)),
+                        dx,
+                        dy,
+                        width=draw_w,
+                        height=draw_h,
+                        preserveAspectRatio=True,
+                        mask="auto",
+                    )
             else:
-                processed = preprocess_card_image_for_pdf(img_path, quality_key, card_box_inches)
-                draw_w, draw_h = fit_image_into_box(processed, card_w, card_h)
+                # Source cannot provide or generate bleed.
+                # Draw the normal INNER image without outer bleed.
+                processed_inner = preprocess_card_image_for_pdf(
+                    img_path,
+                    quality_key,
+                    card_box_inches,
+                    crop_bleed=True,
+                )
+                draw_w, draw_h = fit_image_into_box(
+                    processed_inner,
+                    card_w,
+                    card_h,
+                )
                 dx = x + (card_w - draw_w) / 2.0
                 dy = y + (card_h - draw_h) / 2.0
                 c.drawImage(
-                    ImageReader(str(processed)),
-                    dx, dy,
-                    width=draw_w, height=draw_h,
-                    preserveAspectRatio=True, mask="auto"
+                    ImageReader(str(processed_inner)),
+                    dx,
+                    dy,
+                    width=draw_w,
+                    height=draw_h,
+                    preserveAspectRatio=True,
+                    mask="auto",
                 )
         else:
-            # Not eligible -> inner fallback
-            processed = preprocess_card_image_for_pdf(img_path, quality_key, card_box_inches)
+            # Interior grid position: no outer bleed is needed.
+            processed = preprocess_card_image_for_pdf(
+                img_path,
+                quality_key,
+                card_box_inches,
+                crop_bleed=True,
+            )            
             draw_w, draw_h = fit_image_into_box(processed, card_w, card_h)
             dx = x + (card_w - draw_w) / 2.0
             dy = y + (card_h - draw_h) / 2.0
             c.drawImage(
                 ImageReader(str(processed)),
-                dx, dy,
-                width=draw_w, height=draw_h,
-                preserveAspectRatio=True, mask="auto"
+                dx,
+                dy,
+                width=draw_w,
+                height=draw_h,
+                preserveAspectRatio=True,
+                mask="auto",
             )
     # Marken nur zeichnen, wenn via INI aktiv (Länge und Linienbreite > 0)
-    if cutmarks_enabled_standard() and _cutmarks_visible_for_side(is_back):
+    if cutmarks_enabled_standard() and _cutmarks_visible_for_side(CUTMARKS_VISIBLE_STD, is_back):
         draw_inner_crosses_grid(c, x0, y0, card_w, card_h, cols, rows)
         draw_outer_marks_grid(c, x0, y0, card_w, card_h, cols, rows)
         draw_corner_marks_grid(c, x0, y0, card_w, card_h, cols, rows)
@@ -3025,7 +3268,7 @@ def place_images_standardbleed_grid(
                 mask="auto",
             )
     # Cut marks for Standardbleed: per-card trim corners (double marks between cards)
-    if cutmarks_enabled_standardbleed() and _cutmarks_visible_for_side(is_back):
+    if cutmarks_enabled_standardbleed() and _cutmarks_visible_for_side(CUTMARKS_VISIBLE_SB, is_back):
         draw_card_corner_crosses_standardbleed(
             c, x0, y0,
             card_w, card_h,
@@ -3063,7 +3306,7 @@ def draw_cutmarks_bleed_outer_only(c: canvas.Canvas,
     """
     c.saveState()
     c.setLineWidth(CUTMARK_LINE_PT_BLEED)
-    c.setStrokeColor(CUTMARK_COLOR)
+    c.setStrokeColor(CUTMARK_COLOR_BLEED)
     grid_w = cols * box_w
     grid_h = rows * box_h
     x_left = x0
@@ -3124,7 +3367,7 @@ def place_images_bleed_grid(c: canvas.Canvas,
         c.drawImage(ImageReader(str(processed)), dx, dy, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
 
     # Bleed-Marken nur zeichnen, wenn via INI aktiv (Länge und Linienbreite > 0)
-    if cutmarks_enabled_bleed() and _cutmarks_visible_for_side(is_back):
+    if cutmarks_enabled_bleed() and _cutmarks_visible_for_side(CUTMARKS_VISIBLE_BLEED, is_back):
         draw_cutmarks_bleed_outer_only(c, x0, y0, cols=cols, rows=rows, box_w=box_w, box_h=box_h)
 
 def place_images_gutterfold_grid(
@@ -3292,7 +3535,8 @@ def place_images_gutterfold_grid(
             grid_w=grid_w,
             grid_h=grid_h,
             y_edges=y_edges,
-            x_marks=x_marks
+            x_marks=x_marks,
+            color=CUTMARK_COLOR_GF,
         )
 
         # ------------------------------------------------------------
@@ -3303,7 +3547,8 @@ def place_images_gutterfold_grid(
         bridge_x = [x0 + j * card_w for j in range(cols + 1)]
         if cutmarks_enabled_gutterfold():
             draw_gutter_bridge_marks(
-                c, bridge_x, y_gutter_bottom, y_gutter_top
+                c, bridge_x, y_gutter_bottom, y_gutter_top,
+                color=CUTMARK_COLOR_GF,
             )
 
 # =========================================================
@@ -3383,11 +3628,17 @@ def place_images_gutterbleed_grid(
         draw_cutmarks_gutterfold(
             c, x0=x0, y0=y0, grid_w=grid_w, grid_h=grid_h,
             y_edges=y_edges, x_marks=x_marks,
-            line_width=CUTMARK_LINE_PT_GB, length_pt=CUTMARK_LEN_PT_GB
+            line_width=CUTMARK_LINE_PT_GB,
+            length_pt=CUTMARK_LEN_PT_GB,
+            color=CUTMARK_COLOR_GB,
         )
         y_gutter_bottom = y0 + card_h
         y_gutter_top = y0 + card_h + fold_gutter
-        draw_gutter_bridge_marks(c, x_marks, y_gutter_bottom, y_gutter_top, line_width=CUTMARK_LINE_PT_GB)
+        draw_gutter_bridge_marks(
+            c, x_marks, y_gutter_bottom, y_gutter_top,
+            line_width=CUTMARK_LINE_PT_GB,
+            color=CUTMARK_COLOR_GB,
+        )
 
 
 def generate_pdf(layout_key: str,
